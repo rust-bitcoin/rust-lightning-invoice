@@ -2,6 +2,7 @@
 name = "lightning-invoice"
 version = "0.1.0"
 authors = ["Sebastian Geisler <sgeisler@wh2.tu-dresden.de>"]
+license = "Apache-2.0"
 
 [dependencies]
 bech32 = {git = "https://github.com/sgeisler/rust-bech32"}
