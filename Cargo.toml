@@ -4,14 +4,10 @@ version = "0.1.0"
 authors = ["Sebastian Geisler <sgeisler@wh2.tu-dresden.de>"]
 
 [dependencies]
-error-chain = "0.11.0"
 bech32 = {git = "https://github.com/sgeisler/rust-bech32"}
 regex = "0.2"
 chrono = "0.4"
-secp256k1 = "0.8.1"
-nom = "3.2.1"
-arrayref = "0.3.4"
-bit-vec = "0.4.4"
+secp256k1 = "0.8"
 bitcoin = "0.11"
 
 [dev-dependencies]

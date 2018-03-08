@@ -1,10 +1,5 @@
 extern crate bech32;
-extern crate bit_vec;
 extern crate chrono;
-#[macro_use]
-extern crate error_chain;
-#[macro_use]
-extern crate nom;
 extern crate regex;
 extern crate secp256k1;
 
@@ -12,13 +7,10 @@ extern crate secp256k1;
 extern crate hex;
 
 use std::str::FromStr;
-use std::num::ParseIntError;
 
 use bech32::Bech32;
 
 use chrono::{DateTime, Utc, Duration};
-
-use regex::Regex;
 
 use secp256k1::key::PublicKey;
 use secp256k1::{Signature, Secp256k1};
@@ -26,7 +18,7 @@ use secp256k1::{Signature, Secp256k1};
 mod parsers;
 
 /// An Invoice for a payment on the lightning network as defined in
-/// [BOLT #11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md#examples).
+/// [BOLT #11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md).
 
 #[derive(Eq, PartialEq, Debug)]
 pub struct Invoice {
@@ -79,41 +71,13 @@ pub enum Fallback {
     ScriptHash([u8; 20]),
 }
 
-impl Invoice {
-    // TODO: maybe rewrite using nom
-    fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>)> {
-        let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
-        let parts = match re.captures(&hrp) {
-            Some(capture_group) => capture_group,
-            None => return Err(ErrorKind::MalformedHRP.into())
-        };
-
-        let currency = parts[0].parse::<Currency>()?;
-
-        let amount = if !parts[1].is_empty() {
-            Some(parts[1].parse::<u64>()?)
-        } else {
-            None
-        };
-
-        /// `get_multiplier(x)` will only return `None` if `x` is not "m", "u", "n" or "p", which
-        /// due to the above regex ensures that `get_multiplier(x)` iif `x == ""`, so it's ok to
-        /// convert a none to 1BTC aka 10^12pBTC.
-        let multiplier = parts[2].chars().next().and_then(|suffix| {
-            get_multiplier(&suffix)
-        }).unwrap_or(1_000_000_000_000);
-
-        Ok((currency, amount.map(|amount| amount * multiplier)))
-    }
-}
-
 impl FromStr for Invoice {
-    type Err = Error;
+    type Err = parsers::Error;
 
-    fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let Bech32 {hrp, data} = s.parse()?;
 
-        let (currency, amount) = Invoice::parse_hrp(&hrp)?;
+        let (currency, amount) = parsers::parse_hrp(&hrp)?;
 
         Ok(Invoice {
             currency,
@@ -125,15 +89,7 @@ impl FromStr for Invoice {
     }
 }
 
-fn get_multiplier(multiplier: &char) -> Option<u64> {
-    match multiplier {
-        &'m' => Some(1_000_000_000),
-        &'u' => Some(1_000_000),
-        &'n' => Some(1_000),
-        &'p' => Some(1),
-        _ => None
-    }
-}
+
 
 impl Currency {
     pub fn get_currency_prefix(&self) -> &'static str {
@@ -143,47 +99,25 @@ impl Currency {
         }
     }
 
-    pub fn from_prefix(prefix: &str) -> Result<Currency> {
+    pub fn from_prefix(prefix: &str) -> Result<Currency, parsers::Error> {
         match prefix {
             "bc" => Ok(Currency::Bitcoin),
             "tb" => Ok(Currency::BitcoinTestnet),
-            _ => Err(ErrorKind::BadCurrencyPrefix.into())
+            _ => Err(parsers::Error::UnknownCurrency)
         }
     }
 }
 
 impl FromStr for Currency {
-    type Err = Error;
+    type Err = parsers::Error;
 
-    fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         Currency::from_prefix(s)
     }
 }
 
-error_chain! {
-    foreign_links {
-        Bech32Error(bech32::Error);
-        ParseIntError(ParseIntError);
-        MalformedSignature(secp256k1::Error);
-    }
 
-    errors {
-        BadLnPrefix {
-            description("The invoice did not begin with 'ln'."),
-            display("The invoice did not begin with 'ln'."),
-        }
 
-        BadCurrencyPrefix {
-            description("unsupported currency"),
-            display("unsupported currency"),
-        }
-
-        MalformedHRP {
-            description("malformed human readable part"),
-            display("malformed human readable part"),
-        }
-    }
-}
 
 #[cfg(test)]
 mod test {
