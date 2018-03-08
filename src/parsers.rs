@@ -5,10 +5,14 @@ use std::num::ParseIntError;
 
 use bech32;
 
-use regex::Regex;
-use secp256k1;
+use chrono::{DateTime, Utc, TimeZone};
 
-use super::Currency;
+use regex::Regex;
+
+use secp256k1;
+use secp256k1::{Signature, Secp256k1};
+
+use super::{Currency, TaggedField};
 
 pub(super) fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>), Error> {
     let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
@@ -45,6 +49,34 @@ fn get_multiplier(multiplier: &char) -> Option<u64> {
     }
 }
 
+// why &[u8] instead of Vec<u8>?: split_off reallocs => wouldn't save much cloning,
+// instead split_at is used, which doesn't need ownership of the data
+pub(super) fn parse_data(data: &[u8]) -> Result<(DateTime<Utc>, Vec<TaggedField>, Signature), Error> {
+    if data.len() < 104 + 7 { // signature + timestamp
+        return Err(Error::TooShortDataPart);
+    }
+
+    let (time, data) = data.split_at(8);
+    let (tagged, signature) = data.split_at(data.len() - 32);
+    assert_eq!(time.len(), 7);
+    assert_eq!(signature.len(), 104);
+
+    let time = Utc.timestamp(be_u64(time) as i64, 0);
+    let signature = Signature::from_compact(&Secp256k1::without_caps(), signature)?;
+	let tagged = parse_tagged_parts(tagged)?;
+
+    Ok((time, tagged, signature))
+}
+
+// interpret 5bit bech32 characters as big endian u64
+fn be_u64(bytes_5b: &[u8]) -> u64 {
+    bytes_5b.iter().fold(0, |acc, b| acc * 32 + (*b as u64))
+}
+
+fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
+	unimplemented!()
+}
+
 #[derive(PartialEq, Debug)]
 pub enum Error {
     Bech32Error(bech32::Error),
@@ -52,7 +84,8 @@ pub enum Error {
     MalformedSignature(secp256k1::Error),
     BadPrefix,
     UnknownCurrency,
-    MalformedHRP
+    MalformedHRP,
+    TooShortDataPart
 }
 
 impl Display for Error {
@@ -86,7 +119,8 @@ impl error::Error for Error {
             MalformedSignature(_) => "invalid secp256k1 signature",
             BadPrefix => "did not begin with 'ln'",
             UnknownCurrency => "currency code unknown",
-            MalformedHRP => "malformed human readable part"
+            MalformedHRP => "malformed human readable part",
+            TooShortDataPart => "data part too short (should be at least 111 bech32 chars long)"
         }
     }
 }
