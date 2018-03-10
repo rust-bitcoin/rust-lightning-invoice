@@ -5,7 +5,7 @@ authors = ["Sebastian Geisler <sgeisler@wh2.tu-dresden.de>"]
 license = "Apache-2.0"
 
 [dependencies]
-bech32 = {git = "https://github.com/clarkmoody/rust-bech32"}
+bech32 = "0.3.1"
 regex = "0.2"
 chrono = "0.4"
 secp256k1 = "0.8"
