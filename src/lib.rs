@@ -4,7 +4,8 @@ extern crate regex;
 extern crate secp256k1;
 
 #[cfg(test)]
-extern crate hex;
+#[macro_use]
+extern crate binary_macros;
 
 use std::str::FromStr;
 
@@ -59,6 +60,17 @@ pub enum TaggedField {
 	},
 }
 
+impl TaggedField {
+	const TAG_PAYMENT_HASH: u8 = 1;
+	const TAG_DESCRIPTION: u8 = 13;
+	const TAG_PAYEE_PUB_KEY: u8 = 19;
+	const TAG_DESCRIPTION_HASH: u8 = 23;
+	const TAG_EXPIRY_TIME: u8 = 6;
+	const TAG_MIN_FINAL_CLTV_EXPIRY: u8 = 24;
+	const TAG_FALLBACK: u8 = 9;
+	const TAG_ROUTE: u8 = 3;
+}
+
 // TODO: better types instead onf byte arrays
 #[derive(Eq, PartialEq, Debug)]
 pub enum Fallback {
@@ -74,7 +86,7 @@ impl FromStr for Invoice {
 	type Err = parsers::Error;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		let Bech32 { hrp, data } = s.parse()?;
+		let (hrp, data) = s.parse::<Bech32>()?.into_parts();
 
 		let (currency, amount) = parsers::parse_hrp(&hrp)?;
 

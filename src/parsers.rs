@@ -2,8 +2,10 @@ use std::error;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::num::ParseIntError;
+use std::str;
 
 use bech32;
+use bech32::{convert_bits, BitConversionError};
 
 use chrono::{DateTime, Utc, TimeZone};
 
@@ -74,7 +76,58 @@ fn be_u64(bytes_5b: &[u8]) -> u64 {
 }
 
 fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
-	unimplemented!()
+	let mut parts = Vec::<TaggedField>::new();
+	let mut data = data;
+
+	while !data.is_empty() {
+		if data.len() < 3 {
+			return Err(Error::UnexpectedEndOfTaggedFields);
+		}
+		let (meta, remaining_data) = data.split_at(3);
+		let (tag, len) = meta.split_at(1);
+
+		let len = be_u64(len) as usize;
+		let tag = tag[0];
+
+		if remaining_data.len() < len {
+			return Err(Error::UnexpectedEndOfTaggedFields);
+		}
+		let (field_data, remaining_data) = remaining_data.split_at(len);
+
+		data = remaining_data;
+
+		let field = parse_field(tag, field_data)?;
+
+		field.map(|f| parts.push(f));
+	}
+	Ok(parts)
+}
+
+fn parse_field(tag: u8, field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
+	match tag {
+		TaggedField::TAG_PAYMENT_HASH => parse_payment_hash(field_data),
+		_ => {
+			// "A reader MUST skip over unknown fields"
+			Ok(None)
+		}
+	}
+}
+
+fn parse_payment_hash(field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
+	if field_data.len() != 52 {
+		// "A reader MUST skip over […] a p […] field that does not have data_length 52 […]."
+		Ok(None)
+	} else {
+		let mut hash: [u8; 32] = Default::default();
+		hash.copy_from_slice(&convert_bits(field_data, 5, 8, false)?);
+		Ok(Some(TaggedField::PaymentHash(hash)))
+	}
+}
+
+fn parse_description(field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
+	let bytes = convert_bits(field_data, 5, 8, false)?;
+	let description = String::from(str::from_utf8(&bytes)?);
+	Ok(Some(TaggedField::Description(description)))
 }
 
 #[derive(PartialEq, Debug)]
@@ -86,6 +139,9 @@ pub enum Error {
 	UnknownCurrency,
 	MalformedHRP,
 	TooShortDataPart,
+	UnexpectedEndOfTaggedFields,
+	DescriptionDecodeError(str::Utf8Error),
+	PaddingError(BitConversionError),
 }
 
 impl Display for Error {
@@ -102,7 +158,13 @@ impl Display for Error {
 			}
 			MalformedSignature(ref e) => {
 				write!(f, "{} ({})", self.description(), e)
-			}
+			},
+			DescriptionDecodeError(ref e) => {
+				write!(f, "{} ({})", self.description(), e)
+			},
+			PaddingError(ref e) => {
+				write!(f, "{} ({})", self.description(), e)
+			},
 			_ => {
 				write!(f, "{}", self.description())
 			}
@@ -120,7 +182,10 @@ impl error::Error for Error {
 			BadPrefix => "did not begin with 'ln'",
 			UnknownCurrency => "currency code unknown",
 			MalformedHRP => "malformed human readable part",
-			TooShortDataPart => "data part too short (should be at least 111 bech32 chars long)"
+			TooShortDataPart => "data part too short (should be at least 111 bech32 chars long)",
+			UnexpectedEndOfTaggedFields => "tagged fields part ended unexpectedly",
+			DescriptionDecodeError(_) => "description is no valid utf-8 string",
+			PaddingError(_) => "some data field had bad padding",
 		}
 	}
 }
@@ -138,3 +203,45 @@ macro_rules! from_error {
 from_error!(Error::Bech32Error, bech32::Error);
 from_error!(Error::MalformedSignature, secp256k1::Error);
 from_error!(Error::ParseAmountError, ParseIntError);
+from_error!(Error::DescriptionDecodeError, str::Utf8Error);
+from_error!(Error::PaddingError, BitConversionError);
+
+#[cfg(test)]
+mod test {
+	use TaggedField;
+	use super::*;
+
+	const CHARSET_REV: [i8; 128] = [
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		15, -1, 10, 17, 21, 20, 26, 30,  7,  5, -1, -1, -1, -1, -1, -1,
+		-1, 29, -1, 24, 13, 25,  9,  8, 23, -1, 18, 22, 31, 27, 19, -1,
+		1,  0,  3, 16, 11, 28, 12, 14,  6,  4,  2, -1, -1, -1, -1, -1,
+		-1, 29, -1, 24, 13, 25,  9,  8, 23, -1, 18, 22, 31, 27, 19, -1,
+		1,  0,  3, 16, 11, 28, 12, 14,  6,  4,  2, -1, -1, -1, -1, -1
+	];
+
+	fn from_bech32(bytes_5b: &[u8]) -> Vec<u8> {
+		bytes_5b.iter().map(|c| CHARSET_REV[*c as usize] as u8).collect()
+	}
+
+	#[test]
+	fn test_parse_payment_hash() {
+		let input = from_bech32(
+			"qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypq".as_bytes()
+		);
+
+		let hash = base16!("0001020304050607080900010203040506070809000102030405060708090102");
+		let expected = Ok(Some(TaggedField::PaymentHash(*hash)));
+
+		assert_eq!(parse_payment_hash(&input), expected);
+	}
+
+	#[test]
+	fn test_parse_description() {
+		let input = from_bech32("xysxxatsyp3k7enxv4js".as_bytes());
+		let expected = Ok(Some(TaggedField::Description("1 cup coffee".into())));
+		assert_eq!(parse_description(&input), expected);
+	}
+}
