@@ -5,7 +5,7 @@ use std::num::ParseIntError;
 use std::str;
 
 use bech32;
-use bech32::{convert_bits, BitConversionError};
+use bech32::convert_bits;
 
 use chrono::{DateTime, Utc, TimeZone};
 
@@ -141,7 +141,7 @@ pub enum Error {
 	TooShortDataPart,
 	UnexpectedEndOfTaggedFields,
 	DescriptionDecodeError(str::Utf8Error),
-	PaddingError(BitConversionError),
+	PaddingError(bech32::Error),
 }
 
 impl Display for Error {
@@ -200,11 +200,18 @@ macro_rules! from_error {
     }
 }
 
-from_error!(Error::Bech32Error, bech32::Error);
 from_error!(Error::MalformedSignature, secp256k1::Error);
 from_error!(Error::ParseAmountError, ParseIntError);
 from_error!(Error::DescriptionDecodeError, str::Utf8Error);
-from_error!(Error::PaddingError, BitConversionError);
+
+impl From<bech32::Error> for Error {
+	fn from(e: bech32::Error) -> Self {
+		match e {
+			bech32::Error::InvalidPadding => Error::PaddingError(e),
+			_ => Error::Bech32Error(e)
+		}
+	}
+}
 
 #[cfg(test)]
 mod test {
