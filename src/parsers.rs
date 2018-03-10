@@ -13,6 +13,7 @@ use regex::Regex;
 
 use secp256k1;
 use secp256k1::{Signature, Secp256k1};
+use secp256k1::key::PublicKey;
 
 use super::{Currency, TaggedField};
 
@@ -106,6 +107,8 @@ fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
 fn parse_field(tag: u8, field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
 	match tag {
 		TaggedField::TAG_PAYMENT_HASH => parse_payment_hash(field_data),
+		TaggedField::TAG_DESCRIPTION => parse_description(field_data),
+		TaggedField::TAG_PAYEE_PUB_KEY => parse_payee_pub_key(field_data),
 		_ => {
 			// "A reader MUST skip over unknown fields"
 			Ok(None)
@@ -128,6 +131,17 @@ fn parse_description(field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
 	let bytes = convert_bits(field_data, 5, 8, false)?;
 	let description = String::from(str::from_utf8(&bytes)?);
 	Ok(Some(TaggedField::Description(description)))
+}
+
+fn parse_payee_pub_key(field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
+	if field_data.len() != 53 {
+		// "A reader MUST skip over […] a n […] field that does not have data_length 53 […]."
+		Ok(None)
+	} else {
+		let data_bytes = convert_bits(field_data, 5, 8, false)?;
+		let pub_key = PublicKey::from_slice(&Secp256k1::without_caps(), &data_bytes)?;
+		Ok(Some(TaggedField::PayeePubKey(pub_key)))
+	}
 }
 
 #[derive(PartialEq, Debug)]
@@ -158,13 +172,13 @@ impl Display for Error {
 			}
 			MalformedSignature(ref e) => {
 				write!(f, "{} ({})", self.description(), e)
-			},
+			}
 			DescriptionDecodeError(ref e) => {
 				write!(f, "{} ({})", self.description(), e)
-			},
+			}
 			PaddingError(ref e) => {
 				write!(f, "{} ({})", self.description(), e)
-			},
+			}
 			_ => {
 				write!(f, "{}", self.description())
 			}
@@ -222,11 +236,11 @@ mod test {
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-		15, -1, 10, 17, 21, 20, 26, 30,  7,  5, -1, -1, -1, -1, -1, -1,
-		-1, 29, -1, 24, 13, 25,  9,  8, 23, -1, 18, 22, 31, 27, 19, -1,
-		1,  0,  3, 16, 11, 28, 12, 14,  6,  4,  2, -1, -1, -1, -1, -1,
-		-1, 29, -1, 24, 13, 25,  9,  8, 23, -1, 18, 22, 31, 27, 19, -1,
-		1,  0,  3, 16, 11, 28, 12, 14,  6,  4,  2, -1, -1, -1, -1, -1
+		15, -1, 10, 17, 21, 20, 26, 30, 7, 5, -1, -1, -1, -1, -1, -1,
+		-1, 29, -1, 24, 13, 25, 9, 8, 23, -1, 18, 22, 31, 27, 19, -1,
+		1, 0, 3, 16, 11, 28, 12, 14, 6, 4, 2, -1, -1, -1, -1, -1,
+		-1, 29, -1, 24, 13, 25, 9, 8, 23, -1, 18, 22, 31, 27, 19, -1,
+		1, 0, 3, 16, 11, 28, 12, 14, 6, 4, 2, -1, -1, -1, -1, -1
 	];
 
 	fn from_bech32(bytes_5b: &[u8]) -> Vec<u8> {
@@ -250,5 +264,16 @@ mod test {
 		let input = from_bech32("xysxxatsyp3k7enxv4js".as_bytes());
 		let expected = Ok(Some(TaggedField::Description("1 cup coffee".into())));
 		assert_eq!(parse_description(&input), expected);
+	}
+
+	#[test]
+	fn test_parse_payee_pub_key() {
+		let input = from_bech32("q0n326hr8v9zprg8gsvezcch06gfaqqhde2aj730yg0durunfhv66".as_bytes());
+		let pk_bytes = base16!("03E7156AE33B0A208D0744199163177E909E80176E55D97A2F221EDE0F934DD9AD");
+		let expected = Ok(Some(TaggedField::PayeePubKey(
+			PublicKey::from_slice(&Secp256k1::without_caps(), &pk_bytes[..]).unwrap()
+		)));
+
+		assert_eq!(parse_payee_pub_key(&input), expected);
 	}
 }
