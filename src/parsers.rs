@@ -176,6 +176,15 @@ fn parse_expiry_time(field_data: &[u8]) -> ParseFieldResult {
 	}
 }
 
+fn parse_min_final_cltv_expiry(field_data: &[u8]) -> ParseFieldResult {
+	let expiry = parse_int::<u64>(field_data);
+	if let Some(expiry) = expiry {
+		Ok(Some(TaggedField::MinFinalCltvExpiry(expiry)))
+	} else {
+		Err(Error::IntegerOverflowError)
+	}
+}
+
 #[derive(PartialEq, Debug)]
 pub enum Error {
 	Bech32Error(bech32::Error),
@@ -332,5 +341,13 @@ mod test {
 
 		assert_eq!(parse_expiry_time(&input), expected);
 
+	}
+
+	#[test]
+	fn test_parse_min_final_cltv_expiry() {
+		let input = from_bech32("pr".as_bytes());
+		let expected = Ok(Some(TaggedField::MinFinalCltvExpiry(35)));
+
+		assert_eq!(parse_min_final_cltv_expiry(&input), expected);
 	}
 }
