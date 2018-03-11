@@ -104,7 +104,9 @@ fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
 	Ok(parts)
 }
 
-fn parse_field(tag: u8, field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
+type ParseFieldResult = Result<Option<TaggedField>, Error>;
+
+fn parse_field(tag: u8, field_data: &[u8]) -> ParseFieldResult {
 	match tag {
 		TaggedField::TAG_PAYMENT_HASH => parse_payment_hash(field_data),
 		TaggedField::TAG_DESCRIPTION => parse_description(field_data),
@@ -116,7 +118,7 @@ fn parse_field(tag: u8, field_data: &[u8]) -> Result<Option<TaggedField>, Error>
 	}
 }
 
-fn parse_payment_hash(field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
+fn parse_payment_hash(field_data: &[u8]) -> ParseFieldResult {
 	if field_data.len() != 52 {
 		// "A reader MUST skip over […] a p […] field that does not have data_length 52 […]."
 		Ok(None)
@@ -127,13 +129,13 @@ fn parse_payment_hash(field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
 	}
 }
 
-fn parse_description(field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
+fn parse_description(field_data: &[u8]) -> ParseFieldResult {
 	let bytes = convert_bits(field_data, 5, 8, false)?;
 	let description = String::from(str::from_utf8(&bytes)?);
 	Ok(Some(TaggedField::Description(description)))
 }
 
-fn parse_payee_pub_key(field_data: &[u8]) -> Result<Option<TaggedField>, Error> {
+fn parse_payee_pub_key(field_data: &[u8]) -> ParseFieldResult {
 	if field_data.len() != 53 {
 		// "A reader MUST skip over […] a n […] field that does not have data_length 53 […]."
 		Ok(None)
