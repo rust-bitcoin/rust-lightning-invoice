@@ -7,7 +7,9 @@ use std::str;
 use bech32;
 use bech32::convert_bits;
 
-use chrono::{DateTime, Utc, TimeZone};
+use chrono::{DateTime, Utc, TimeZone, Duration};
+
+use num_traits::{CheckedAdd, CheckedMul};
 
 use regex::Regex;
 
@@ -64,16 +66,22 @@ pub(super) fn parse_data(data: &[u8]) -> Result<(DateTime<Utc>, Vec<TaggedField>
 	assert_eq!(time.len(), 7);
 	assert_eq!(signature.len(), 104);
 
-	let time = Utc.timestamp(be_u64(time) as i64, 0);
+	let unix_time: i64 = parse_int(time).expect("7*5bit < 63bit, no overflow possible");
+	let time = Utc.timestamp(unix_time, 0);
 	let signature = Signature::from_compact(&Secp256k1::without_caps(), signature)?;
 	let tagged = parse_tagged_parts(tagged)?;
 
 	Ok((time, tagged, signature))
 }
 
-// interpret 5bit bech32 characters as big endian u64
-fn be_u64(bytes_5b: &[u8]) -> u64 {
-	bytes_5b.iter().fold(0, |acc, b| acc * 32 + (*b as u64))
+// interpret 5bit bech32 characters as big endian integer
+// returns None if the input is too big to be stored in T
+fn parse_int<T: CheckedAdd + CheckedMul + From<u8> + Default>(bytes_5b: &[u8]) -> Option<T> {
+	bytes_5b.iter().fold(Some(Default::default()), |acc, b|
+		acc
+			.and_then(|x| x.checked_mul(&(32u8).into()))
+			.and_then(|x| x.checked_add(&(*b).into()))
+	)
 }
 
 fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
@@ -87,7 +95,7 @@ fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
 		let (meta, remaining_data) = data.split_at(3);
 		let (tag, len) = meta.split_at(1);
 
-		let len = be_u64(len) as usize;
+		let len: usize = parse_int(len).expect("can't overflow");
 		let tag = tag[0];
 
 		if remaining_data.len() < len {
@@ -111,6 +119,8 @@ fn parse_field(tag: u8, field_data: &[u8]) -> ParseFieldResult {
 		TaggedField::TAG_PAYMENT_HASH => parse_payment_hash(field_data),
 		TaggedField::TAG_DESCRIPTION => parse_description(field_data),
 		TaggedField::TAG_PAYEE_PUB_KEY => parse_payee_pub_key(field_data),
+		TaggedField::TAG_DESCRIPTION_HASH => parse_description_hash(field_data),
+		TaggedField::TAG_EXPIRY_TIME => parse_expiry_time(field_data),
 		_ => {
 			// "A reader MUST skip over unknown fields"
 			Ok(None)
@@ -157,6 +167,15 @@ fn parse_description_hash(field_data: &[u8]) -> ParseFieldResult {
 	}
 }
 
+fn parse_expiry_time(field_data: &[u8]) -> ParseFieldResult {
+	let expiry = parse_int::<i64>(field_data);
+	if let Some(expiry) = expiry {
+		Ok(Some(TaggedField::ExpiryTime(Duration::seconds(expiry))))
+	} else {
+		Err(Error::IntegerOverflowError)
+	}
+}
+
 #[derive(PartialEq, Debug)]
 pub enum Error {
 	Bech32Error(bech32::Error),
@@ -169,6 +188,7 @@ pub enum Error {
 	UnexpectedEndOfTaggedFields,
 	DescriptionDecodeError(str::Utf8Error),
 	PaddingError(bech32::Error),
+	IntegerOverflowError,
 }
 
 impl Display for Error {
@@ -213,6 +233,7 @@ impl error::Error for Error {
 			UnexpectedEndOfTaggedFields => "tagged fields part ended unexpectedly",
 			DescriptionDecodeError(_) => "description is no valid utf-8 string",
 			PaddingError(_) => "some data field had bad padding",
+			IntegerOverflowError => "parsed integer doesn't fit into receiving type",
 		}
 	}
 }
@@ -300,5 +321,16 @@ mod test {
 		)));
 
 		assert_eq!(parse_description_hash(&input), expected);
+	}
+
+	#[test]
+	fn test_parse_expiry_time() {
+		let input = from_bech32("pu".as_bytes());
+		let expected = Ok(Some(TaggedField::ExpiryTime(
+			Duration::seconds(60)
+		)));
+
+		assert_eq!(parse_expiry_time(&input), expected);
+
 	}
 }

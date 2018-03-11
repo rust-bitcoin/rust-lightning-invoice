@@ -1,5 +1,6 @@
 extern crate bech32;
 extern crate chrono;
+extern crate num_traits;
 extern crate regex;
 extern crate secp256k1;
 
