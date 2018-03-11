@@ -146,6 +146,17 @@ fn parse_payee_pub_key(field_data: &[u8]) -> ParseFieldResult {
 	}
 }
 
+fn parse_description_hash(field_data: &[u8]) -> ParseFieldResult {
+	if field_data.len() != 52 {
+		// "A reader MUST skip over […] a h […] field that does not have data_length 52 […]."
+		Ok(None)
+	} else {
+		let mut hash: [u8; 32] = Default::default();
+		hash.copy_from_slice(&convert_bits(field_data, 5, 8, false)?);
+		Ok(Some(TaggedField::DescriptionHash(hash)))
+	}
+}
+
 #[derive(PartialEq, Debug)]
 pub enum Error {
 	Bech32Error(bech32::Error),
@@ -277,5 +288,17 @@ mod test {
 		)));
 
 		assert_eq!(parse_payee_pub_key(&input), expected);
+	}
+
+	#[test]
+	fn test_parse_description_hash() {
+		let input = from_bech32(
+			"8yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqs".as_bytes()
+		);
+		let expected = Ok(Some(TaggedField::DescriptionHash(
+			*base16!("3925B6F67E2C340036ED12093DD44E0368DF1B6EA26C53DBE4811F58FD5DB8C1")
+		)));
+
+		assert_eq!(parse_description_hash(&input), expected);
 	}
 }
