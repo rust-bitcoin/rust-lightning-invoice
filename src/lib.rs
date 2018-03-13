@@ -75,9 +75,9 @@ impl TaggedField {
 // TODO: better types instead onf byte arrays
 #[derive(Eq, PartialEq, Debug)]
 pub enum Fallback {
-	SegWitScript {
+	SegWitProgram {
 		version: u8,
-		script: Vec<u8>,
+		program: Vec<u8>,
 	},
 	PubKeyHash([u8; 20]),
 	ScriptHash([u8; 20]),

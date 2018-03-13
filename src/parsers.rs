@@ -17,7 +17,7 @@ use secp256k1;
 use secp256k1::{Signature, Secp256k1};
 use secp256k1::key::PublicKey;
 
-use super::{Currency, TaggedField};
+use super::{Currency, TaggedField, Fallback};
 
 pub(super) fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>), Error> {
 	let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
@@ -185,6 +185,48 @@ fn parse_min_final_cltv_expiry(field_data: &[u8]) -> ParseFieldResult {
 	}
 }
 
+fn parse_fallback(field_data: &[u8]) -> ParseFieldResult {
+	if field_data.len() < 1 {
+		return Err(Error::UnexpectedEndOfTaggedFields);
+	}
+
+	let version = field_data[0];
+	let bytes = convert_bits(&field_data[1..], 5, 8, false)?;
+
+	let fallback_address = match version {
+		v @ 0...16 => {
+			if bytes.len() < 2 || bytes.len() > 40 {
+				return Err(Error::InvalidSegWitProgramLength);
+			}
+
+			Some(Fallback::SegWitProgram {
+				version: v,
+				program: bytes
+			})
+		},
+		17 => {
+			if bytes.len() != 20 {
+				return Err(Error::InvalidPubKeyHashLength);
+			}
+			//TODO: refactor once const generics are available
+			let mut pkh = [0u8; 20];
+			pkh.copy_from_slice(&bytes);
+			Some(Fallback::PubKeyHash(pkh))
+		}
+		18 => {
+			if bytes.len() != 20 {
+				return Err(Error::InvalidScriptHashLength);
+			}
+			let mut sh = [0u8; 20];
+			sh.copy_from_slice(&bytes);
+			Some(Fallback::ScriptHash(sh))
+		}
+		_ => None
+	};
+
+	Ok(fallback_address.map(|addr| TaggedField::Fallback(addr)))
+}
+
 #[derive(PartialEq, Debug)]
 pub enum Error {
 	Bech32Error(bech32::Error),
@@ -198,6 +240,9 @@ pub enum Error {
 	DescriptionDecodeError(str::Utf8Error),
 	PaddingError(bech32::Error),
 	IntegerOverflowError,
+	InvalidSegWitProgramLength,
+	InvalidPubKeyHashLength,
+	InvalidScriptHashLength,
 }
 
 impl Display for Error {
@@ -243,6 +288,9 @@ impl error::Error for Error {
 			DescriptionDecodeError(_) => "description is no valid utf-8 string",
 			PaddingError(_) => "some data field had bad padding",
 			IntegerOverflowError => "parsed integer doesn't fit into receiving type",
+			InvalidSegWitProgramLength => "fallback SegWit program is too long or too short",
+			InvalidPubKeyHashLength => "fallback public key hash has a length unequal 20 bytes",
+			InvalidScriptHashLength => "fallback script hash has a length unequal 32 bytes",
 		}
 	}
 }
@@ -289,6 +337,8 @@ mod test {
 	fn from_bech32(bytes_5b: &[u8]) -> Vec<u8> {
 		bytes_5b.iter().map(|c| CHARSET_REV[*c as usize] as u8).collect()
 	}
+
+	//TODO: test error conditions
 
 	#[test]
 	fn test_parse_payment_hash() {
@@ -349,5 +399,30 @@ mod test {
 		let expected = Ok(Some(TaggedField::MinFinalCltvExpiry(35)));
 
 		assert_eq!(parse_min_final_cltv_expiry(&input), expected);
+	}
+
+	#[test]
+	fn test_parse_fallback() {
+		let cases = vec![
+			(
+				from_bech32("3x9et2e20v6pu37c5d9vax37wxq72un98".as_bytes()),
+				Fallback::PubKeyHash(*base16!("3172B5654F6683C8FB146959D347CE303CAE4CA7"))
+			),
+			(
+				from_bech32("j3a24vwu6r8ejrss3axul8rxldph2q7z9".as_bytes()),
+				Fallback::ScriptHash(*base16!("8F55563B9A19F321C211E9B9F38CDF686EA07845"))
+			),
+			(
+				from_bech32("qw508d6qejxtdg4y5r3zarvary0c5xw7k".as_bytes()),
+				Fallback::SegWitProgram {
+					version: 0,
+					program: Vec::from(&base16!("751E76E8199196D454941C45D1B3A323F1433BD6")[..])
+				}
+			)
+		];
+
+		for (input, expected) in cases.into_iter() {
+			assert_eq!(parse_fallback(&input), Ok(Some(TaggedField::Fallback(expected))));
+		}
 	}
 }
