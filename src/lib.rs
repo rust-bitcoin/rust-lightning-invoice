@@ -52,13 +52,16 @@ pub enum TaggedField {
 	ExpiryTime(Duration),
 	MinFinalCltvExpiry(u64),
 	Fallback(Fallback),
-	Route {
-		pubkey: PublicKey,
-		short_channel_id: u64,
-		fee_base_msat: i32,
-		fee_proportional_millionths: i32,
-		cltv_expiry_delta: u16,
-	},
+	Route(Vec<RouteHop>),
+}
+
+#[derive(Eq, PartialEq, Debug)]
+pub struct RouteHop {
+	pubkey: PublicKey,
+	short_channel_id: [u8; 8],
+	fee_base_msat: u32,
+	fee_proportional_millionths: u32,
+	cltv_expiry_delta: u16,
 }
 
 impl TaggedField {

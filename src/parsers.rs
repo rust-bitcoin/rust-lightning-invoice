@@ -9,7 +9,7 @@ use bech32::convert_bits;
 
 use chrono::{DateTime, Utc, TimeZone, Duration};
 
-use num_traits::{CheckedAdd, CheckedMul};
+use num_traits::{CheckedAdd, CheckedMul, CheckedShl};
 
 use regex::Regex;
 
@@ -17,7 +17,7 @@ use secp256k1;
 use secp256k1::{Signature, Secp256k1};
 use secp256k1::key::PublicKey;
 
-use super::{Currency, TaggedField, Fallback};
+use super::{Currency, TaggedField, Fallback, RouteHop};
 
 pub(super) fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>), Error> {
 	let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
@@ -81,6 +81,13 @@ fn parse_int<T: CheckedAdd + CheckedMul + From<u8> + Default>(bytes_5b: &[u8]) -
 		acc
 			.and_then(|x| x.checked_mul(&(32u8).into()))
 			.and_then(|x| x.checked_add(&(*b).into()))
+	)
+}
+
+// TODO: migrate all uses of parse_int to parse_int_from_bytes_be by converting b32 to b256 first
+fn parse_int_be<T: CheckedAdd + CheckedShl + From<u8> + Default>(bytes: &[u8]) -> Option<T> {
+	bytes.iter().rev().enumerate().fold(Some(T::default()), |acc, (pos, val)|
+		acc.and_then(|x| (T::from(*val)).checked_shl((pos * 8) as u32).and_then(|y| x.checked_add(&y)))
 	)
 }
 
@@ -227,6 +234,37 @@ fn parse_fallback(field_data: &[u8]) -> ParseFieldResult {
 	Ok(fallback_address.map(|addr| TaggedField::Fallback(addr)))
 }
 
+fn parse_route(field_data: &[u8]) -> ParseFieldResult {
+	let bytes = convert_bits(field_data, 5, 8, false)?;
+
+	if bytes.len() % 51 != 0 {
+		return Err(Error::UnexpectedEndOfTaggedFields);
+	}
+
+	let mut route_hops = Vec::<RouteHop>::new();
+
+	let mut bytes = bytes.as_slice();
+	while !bytes.is_empty() {
+		let hop_bytes = &bytes[0..51];
+		bytes = &bytes[51..];
+
+		let mut channel_id: [u8; 8] = Default::default();
+		channel_id.copy_from_slice(&hop_bytes[33..41]);
+
+		let hop = RouteHop {
+			pubkey: PublicKey::from_slice(&Secp256k1::without_caps(), &hop_bytes[0..33])?,
+			short_channel_id: channel_id,
+			fee_base_msat: parse_int_be(&hop_bytes[41..45]).expect("slice too big?"),
+			fee_proportional_millionths: parse_int_be(&hop_bytes[45..49]).expect("slice too big?"),
+			cltv_expiry_delta: parse_int_be(&hop_bytes[49..51]).expect("slice too big?")
+		};
+
+		route_hops.push(hop);
+	}
+
+	Ok(Some(TaggedField::Route(route_hops)))
+}
+
 #[derive(PartialEq, Debug)]
 pub enum Error {
 	Bech32Error(bech32::Error),
@@ -338,6 +376,12 @@ mod test {
 		bytes_5b.iter().map(|c| CHARSET_REV[*c as usize] as u8).collect()
 	}
 
+	#[test]
+	fn test_parse_int_from_bytes_be() {
+		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4]), Some(16909060));
+		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4, 5]), None);
+	}
+
 	//TODO: test error conditions
 
 	#[test]
@@ -424,5 +468,37 @@ mod test {
 		for (input, expected) in cases.into_iter() {
 			assert_eq!(parse_fallback(&input), Ok(Some(TaggedField::Fallback(expected))));
 		}
+	}
+
+	#[test]
+	fn test_parse_route() {
+		let input = from_bech32(
+			"q20q82gphp2nflc7jtzrcazrra7wwgzxqc8u7754cdlpfrmccae92qgzqvzq2ps8pqqqqqqpqqqqq9qqqvpeuqa\
+			fqxu92d8lr6fvg0r5gv0heeeqgcrqlnm6jhphu9y00rrhy4grqszsvpcgpy9qqqqqqgqqqqq7qqzq".as_bytes()
+		);
+
+		let mut expected = Vec::<RouteHop>::new();
+		expected.push(RouteHop {
+			pubkey: PublicKey::from_slice(
+				&Secp256k1::without_caps(),
+				&base16!("029E03A901B85534FF1E92C43C74431F7CE72046060FCF7A95C37E148F78C77255")[..]
+			).unwrap(),
+			short_channel_id: *base16!("0102030405060708"),
+			fee_base_msat: 1,
+			fee_proportional_millionths: 20,
+			cltv_expiry_delta: 3
+		});
+		expected.push(RouteHop {
+			pubkey: PublicKey::from_slice(
+				&Secp256k1::without_caps(),
+				&base16!("039E03A901B85534FF1E92C43C74431F7CE72046060FCF7A95C37E148F78C77255")[..]
+			).unwrap(),
+			short_channel_id: *base16!("030405060708090A"),
+			fee_base_msat: 2,
+			fee_proportional_millionths: 30,
+			cltv_expiry_delta: 4
+		});
+
+		assert_eq!(parse_route(&input), Ok(Some(TaggedField::Route(expected))));
 	}
 }
