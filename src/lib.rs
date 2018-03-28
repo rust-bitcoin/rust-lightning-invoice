@@ -15,7 +15,7 @@ use bech32::Bech32;
 use chrono::{DateTime, Utc, Duration};
 
 use secp256k1::key::PublicKey;
-use secp256k1::Signature;
+use secp256k1::RecoverableSignature;
 
 mod parsers;
 
@@ -36,7 +36,7 @@ pub struct RawInvoice {
 	/// tagged fields of the payment request
 	pub tagged: Vec<TaggedField>,
 
-	pub signature: Signature,
+	pub signature: RecoverableSignature,
 }
 
 #[derive(Eq, PartialEq, Debug)]
