@@ -128,6 +128,9 @@ fn parse_field(tag: u8, field_data: &[u8]) -> ParseFieldResult {
 		TaggedField::TAG_PAYEE_PUB_KEY => parse_payee_pub_key(field_data),
 		TaggedField::TAG_DESCRIPTION_HASH => parse_description_hash(field_data),
 		TaggedField::TAG_EXPIRY_TIME => parse_expiry_time(field_data),
+		TaggedField::TAG_MIN_FINAL_CLTV_EXPIRY => parse_min_final_cltv_expiry(field_data),
+		TaggedField::TAG_FALLBACK => parse_fallback(field_data),
+		TaggedField::TAG_ROUTE => parse_route(field_data),
 		_ => {
 			// "A reader MUST skip over unknown fields"
 			Ok(None)

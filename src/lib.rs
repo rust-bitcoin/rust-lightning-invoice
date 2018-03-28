@@ -15,14 +15,16 @@ use bech32::Bech32;
 use chrono::{DateTime, Utc, Duration};
 
 use secp256k1::key::PublicKey;
-use secp256k1::{Signature, Secp256k1};
+use secp256k1::Signature;
 
 mod parsers;
 
-/// An Invoice for a payment on the lightning network as defined in
+// TODO: ensure Information loss guarantee by introducing a unknown tagged field variant
+/// Represents an syntactically correct Invoice for a payment on the lightning network as defined in
 /// [BOLT #11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md).
+/// De- and encoding should not lead to information loss.
 #[derive(Eq, PartialEq, Debug)]
-pub struct Invoice {
+pub struct RawInvoice {
 	/// The currency deferred from the 3rd and 4th character of the bech32 transaction
 	pub currency: Currency,
 
@@ -57,11 +59,11 @@ pub enum TaggedField {
 
 #[derive(Eq, PartialEq, Debug)]
 pub struct RouteHop {
-	pubkey: PublicKey,
-	short_channel_id: [u8; 8],
-	fee_base_msat: u32,
-	fee_proportional_millionths: u32,
-	cltv_expiry_delta: u16,
+	pub pubkey: PublicKey,
+	pub short_channel_id: [u8; 8],
+	pub fee_base_msat: u32,
+	pub fee_proportional_millionths: u32,
+	pub cltv_expiry_delta: u16,
 }
 
 impl TaggedField {
@@ -86,20 +88,21 @@ pub enum Fallback {
 	ScriptHash([u8; 20]),
 }
 
-impl FromStr for Invoice {
+impl FromStr for RawInvoice {
 	type Err = parsers::Error;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		let (hrp, data) = s.parse::<Bech32>()?.into_parts();
 
 		let (currency, amount) = parsers::parse_hrp(&hrp)?;
+		let (timestamp, tagged, signature) = parsers::parse_data(&data)?;
 
-		Ok(Invoice {
+		Ok(RawInvoice {
 			currency,
 			amount,
-			timestamp: Utc::now(),
-			tagged: vec![],
-			signature: Signature::from_der(&Secp256k1::new(), &[0; 65])?,
+			timestamp,
+			tagged,
+			signature,
 		})
 	}
 }
