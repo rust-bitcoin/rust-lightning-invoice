@@ -26,10 +26,10 @@ pub(super) fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>), Error> {
 		None => return Err(Error::MalformedHRP)
 	};
 
-	let currency = parts[0].parse::<Currency>()?;
+	let currency = parts[1].parse::<Currency>()?;
 
-	let amount = if !parts[1].is_empty() {
-		Some(parts[1].parse::<u64>()?)
+	let amount = if !parts[2].is_empty() {
+		Some(parts[2].parse::<u64>()?)
 	} else {
 		None
 	};
@@ -37,7 +37,7 @@ pub(super) fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>), Error> {
 	// `get_multiplier(x)` will only return `None` if `x` is not "m", "u", "n" or "p", which
 	// due to the above regex ensures that `get_multiplier(x)` iif `x == ""`, so it's ok to
 	// convert a none to 1BTC aka 10^12pBTC.
-	let multiplier = parts[2].chars().next().and_then(|suffix| {
+	let multiplier = parts[3].chars().next().and_then(|suffix| {
 		get_multiplier(&suffix)
 	}).unwrap_or(1_000_000_000_000);
 
@@ -68,7 +68,7 @@ pub(super) fn parse_data(data: &[u8]) -> Result<(DateTime<Utc>, Vec<TaggedField>
 	assert_eq!(recoverable_signature.len(), 104);
 
 	let recoverable_signature_bytes = convert_bits(recoverable_signature, 5, 8, false)?;
-	let signature = &recoverable_signature[0..64];
+	let signature = &recoverable_signature_bytes[0..64];
 	let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
 
 
