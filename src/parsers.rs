@@ -9,7 +9,7 @@ use bech32::convert_bits;
 
 use chrono::{DateTime, Utc, TimeZone, Duration};
 
-use num_traits::{CheckedAdd, CheckedMul, CheckedShl};
+use num_traits::{CheckedAdd, CheckedMul};
 
 use regex::Regex;
 
@@ -72,7 +72,7 @@ pub(super) fn parse_data(data: &[u8]) -> Result<(DateTime<Utc>, Vec<TaggedField>
 	let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
 
 
-	let unix_time: i64 = parse_int(time).expect("7*5bit < 63bit, no overflow possible");
+	let unix_time: i64 = parse_int_be(time, 32).expect("7*5bit < 63bit, no overflow possible");
 	let time = Utc.timestamp(unix_time, 0);
 	let signature = RecoverableSignature::from_compact(
 		&Secp256k1::without_caps(),
@@ -84,20 +84,11 @@ pub(super) fn parse_data(data: &[u8]) -> Result<(DateTime<Utc>, Vec<TaggedField>
 	Ok((time, tagged, signature))
 }
 
-// interpret 5bit bech32 characters as big endian integer
-// returns None if the input is too big to be stored in T
-fn parse_int<T: CheckedAdd + CheckedMul + From<u8> + Default>(bytes_5b: &[u8]) -> Option<T> {
-	bytes_5b.iter().fold(Some(Default::default()), |acc, b|
+fn parse_int_be<T: CheckedAdd + CheckedMul + From<u8> + Default>(digits: &[u8], base: T) -> Option<T> {
+	digits.iter().fold(Some(Default::default()), |acc, b|
 		acc
-			.and_then(|x| x.checked_mul(&(32u8).into()))
+			.and_then(|x| x.checked_mul(&base))
 			.and_then(|x| x.checked_add(&(*b).into()))
-	)
-}
-
-// TODO: migrate all uses of parse_int to parse_int_from_bytes_be by converting b32 to b256 first
-fn parse_int_be<T: CheckedAdd + CheckedShl + From<u8> + Default>(bytes: &[u8]) -> Option<T> {
-	bytes.iter().rev().enumerate().fold(Some(T::default()), |acc, (pos, val)|
-		acc.and_then(|x| (T::from(*val)).checked_shl((pos * 8) as u32).and_then(|y| x.checked_add(&y)))
 	)
 }
 
@@ -112,7 +103,7 @@ fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
 		let (meta, remaining_data) = data.split_at(3);
 		let (tag, len) = meta.split_at(1);
 
-		let len: usize = parse_int(len).expect("can't overflow");
+		let len: usize = parse_int_be(len, 32).expect("can't overflow");
 		let tag = tag[0];
 
 		if remaining_data.len() < len {
@@ -188,7 +179,7 @@ fn parse_description_hash(field_data: &[u8]) -> ParseFieldResult {
 }
 
 fn parse_expiry_time(field_data: &[u8]) -> ParseFieldResult {
-	let expiry = parse_int::<i64>(field_data);
+	let expiry = parse_int_be::<i64>(field_data, 32);
 	if let Some(expiry) = expiry {
 		Ok(Some(TaggedField::ExpiryTime(Duration::seconds(expiry))))
 	} else {
@@ -197,7 +188,7 @@ fn parse_expiry_time(field_data: &[u8]) -> ParseFieldResult {
 }
 
 fn parse_min_final_cltv_expiry(field_data: &[u8]) -> ParseFieldResult {
-	let expiry = parse_int::<u64>(field_data);
+	let expiry = parse_int_be::<u64>(field_data, 32);
 	if let Some(expiry) = expiry {
 		Ok(Some(TaggedField::MinFinalCltvExpiry(expiry)))
 	} else {
@@ -267,9 +258,9 @@ fn parse_route(field_data: &[u8]) -> ParseFieldResult {
 		let hop = RouteHop {
 			pubkey: PublicKey::from_slice(&Secp256k1::without_caps(), &hop_bytes[0..33])?,
 			short_channel_id: channel_id,
-			fee_base_msat: parse_int_be(&hop_bytes[41..45]).expect("slice too big?"),
-			fee_proportional_millionths: parse_int_be(&hop_bytes[45..49]).expect("slice too big?"),
-			cltv_expiry_delta: parse_int_be(&hop_bytes[49..51]).expect("slice too big?")
+			fee_base_msat: parse_int_be(&hop_bytes[41..45], 256).expect("slice too big?"),
+			fee_proportional_millionths: parse_int_be(&hop_bytes[45..49], 256).expect("slice too big?"),
+			cltv_expiry_delta: parse_int_be(&hop_bytes[49..51], 256).expect("slice too big?")
 		};
 
 		route_hops.push(hop);
@@ -393,8 +384,9 @@ mod test {
 
 	#[test]
 	fn test_parse_int_from_bytes_be() {
-		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4]), Some(16909060));
-		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4, 5]), None);
+		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4], 256), Some(16909060));
+		assert_eq!(parse_int_be::<u32>(&[1, 3], 32), Some(35));
+		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4, 5], 256), None);
 	}
 
 	//TODO: test error conditions
