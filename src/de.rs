@@ -53,7 +53,7 @@ impl FromStr for RawInvoice {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		let (hrp, data) = Bech32::from_str_lenient(s)?.into_parts();
 
-		let hrp = parse_hrp(&hrp)?;
+		let hrp: RawHrp = hrp.parse()?;
 		let data_part = parse_data(&data)?;
 
 		Ok(RawInvoice {
@@ -63,33 +63,37 @@ impl FromStr for RawInvoice {
 	}
 }
 
-pub(super) fn parse_hrp(hrp: &str) -> Result<RawHrp, Error> {
-	let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
-	let parts = match re.captures(&hrp) {
-		Some(capture_group) => capture_group,
-		None => return Err(Error::MalformedHRP)
-	};
+impl FromStr for RawHrp {
+	type Err = Error;
 
-	let currency = parts[1].parse::<Currency>()?;
+	fn from_str(hrp: &str) -> Result<Self, <Self as FromStr>::Err> {
+		let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
+		let parts = match re.captures(&hrp) {
+			Some(capture_group) => capture_group,
+			None => return Err(Error::MalformedHRP)
+		};
 
-	let amount = if !parts[2].is_empty() {
-		Some(parts[2].parse::<u64>()?)
-	} else {
-		None
-	};
+		let currency = parts[1].parse::<Currency>()?;
 
-	let si_prefix = &parts[3];
-	let si_prefix: Option<SiPrefix> = if si_prefix.is_empty() {
-		None
-	} else {
-		Some(si_prefix.parse()?)
-	};
+		let amount = if !parts[2].is_empty() {
+			Some(parts[2].parse::<u64>()?)
+		} else {
+			None
+		};
 
-	Ok(RawHrp {
-		currency: currency,
-		raw_amount: amount,
-		si_prefix: si_prefix,
-	})
+		let si_prefix = &parts[3];
+		let si_prefix: Option<SiPrefix> = if si_prefix.is_empty() {
+			None
+		} else {
+			Some(si_prefix.parse()?)
+		};
+
+		Ok(RawHrp {
+			currency: currency,
+			raw_amount: amount,
+			si_prefix: si_prefix,
+		})
+	}
 }
 
 // why &[u8] instead of Vec<u8>?: split_off reallocs => wouldn't save much cloning,
