@@ -3,9 +3,10 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::num::ParseIntError;
 use std::str;
+use std::str::FromStr;
 
 use bech32;
-use bech32::convert_bits;
+use bech32::{Bech32, convert_bits};
 
 use chrono::{DateTime, Utc, TimeZone, Duration};
 
@@ -17,7 +18,38 @@ use secp256k1;
 use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
 use secp256k1::key::PublicKey;
 
-use super::{Currency, TaggedField, Fallback, RouteHop};
+use super::{Currency, TaggedField, Fallback, RouteHop, RawInvoice};
+
+impl FromStr for super::Currency {
+	type Err = Error;
+
+	fn from_str(currency_prefix: &str) -> Result<Self, Error> {
+		match currency_prefix {
+			"bc" => Ok(Currency::Bitcoin),
+			"tb" => Ok(Currency::BitcoinTestnet),
+			_ => Err(Error::UnknownCurrency)
+		}
+	}
+}
+
+impl FromStr for RawInvoice {
+	type Err = Error;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let (hrp, data) = Bech32::from_str_lenient(s)?.into_parts();
+
+		let (currency, amount) = parse_hrp(&hrp)?;
+		let (timestamp, tagged, signature) = parse_data(&data)?;
+
+		Ok(RawInvoice {
+			currency,
+			amount,
+			timestamp,
+			tagged,
+			signature,
+		})
+	}
+}
 
 pub(super) fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>), Error> {
 	let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
@@ -383,6 +415,13 @@ mod test {
 	}
 
 	#[test]
+	fn test_parse_currency_prefix() {
+		assert_eq!("bc".parse::<Currency>(), Ok(Currency::Bitcoin));
+		assert_eq!("tb".parse::<Currency>(), Ok(Currency::BitcoinTestnet));
+		assert_eq!("something_else".parse::<Currency>(), Err(Error::UnknownCurrency))
+	}
+
+	#[test]
 	fn test_parse_int_from_bytes_be() {
 		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4], 256), Some(16909060));
 		assert_eq!(parse_int_be::<u32>(&[1, 3], 32), Some(35));
@@ -507,5 +546,37 @@ mod test {
 		});
 
 		assert_eq!(parse_route(&input), Ok(Some(TaggedField::Route(expected))));
+	}
+
+	#[test]
+	fn test_raw_invoice_deserialization() {
+		use super::*;
+		use super::TaggedField::*;
+		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
+		use chrono::{Utc, TimeZone};
+
+		assert_eq!(
+			"lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmw\
+			wd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq8rkx3yf5tcsyz3d73gafnh3cax9rn449d9p5uxz9\
+			ezhhypd0elx87sjle52x86fux2ypatgddc6k63n7erqz25le42c4u4ecky03ylcqca784w".parse(),
+			Ok(
+				RawInvoice {
+					currency: Currency::Bitcoin,
+					amount: None,
+					timestamp: Utc.timestamp(1496314658, 0),
+					tagged: vec![
+						PaymentHash(*base16!("0001020304050607080900010203040506070809000102030405060708090102")),
+						Description("Please consider supporting this project".into()),
+					],
+					signature: RecoverableSignature::from_compact(
+						&Secp256k1::without_caps(),
+						base16!(
+							"38EC6891345E204145BE8A3A99DE38E98A39D6A569434E1845C8AF7205AFCFCC7F425FCD1463E93C32881EAD0D6E356D467EC8C02553F9AAB15E5738B11F127F"
+						),
+						RecoveryId::from_i32(0).unwrap()
+					).unwrap(),
+				}
+			)
+		)
 	}
 }
