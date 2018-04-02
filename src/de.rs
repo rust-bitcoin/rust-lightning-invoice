@@ -20,6 +20,12 @@ use secp256k1::key::PublicKey;
 
 use super::*;
 
+trait FromBase32: Sized {
+	type Err;
+
+	fn from_base32(bytes_5b: &[u8]) -> Result<Self, Self::Err>;
+}
+
 impl FromStr for super::Currency {
 	type Err = Error;
 
@@ -54,7 +60,7 @@ impl FromStr for RawInvoice {
 		let (hrp, data) = Bech32::from_str_lenient(s)?.into_parts();
 
 		let hrp: RawHrp = hrp.parse()?;
-		let data_part = parse_data(&data)?;
+		let data_part = RawDataPart::from_base32(&data)?;
 
 		Ok(RawInvoice {
 			hrp: hrp,
@@ -96,38 +102,40 @@ impl FromStr for RawHrp {
 	}
 }
 
-// why &[u8] instead of Vec<u8>?: split_off reallocs => wouldn't save much cloning,
-// instead split_at is used, which doesn't need ownership of the data
-pub(super) fn parse_data(data: &[u8]) -> Result<RawDataPart, Error> {
-	if data.len() < 104 + 7 { // signature + timestamp
-		return Err(Error::TooShortDataPart);
+impl FromBase32 for RawDataPart {
+	type Err = Error;
+
+	fn from_base32(data: &[u8]) -> Result<Self, Self::Err> {
+		if data.len() < 104 + 7 { // signature + timestamp
+			return Err(Error::TooShortDataPart);
+		}
+
+		let time = &data[0..7];
+		let tagged= &data[7..(data.len()-104)];
+		let recoverable_signature = &data[(data.len()-104)..];
+		assert_eq!(time.len(), 7);
+		assert_eq!(recoverable_signature.len(), 104);
+
+		let recoverable_signature_bytes = convert_bits(recoverable_signature, 5, 8, false)?;
+		let signature = &recoverable_signature_bytes[0..64];
+		let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
+
+
+		let unix_time: i64 = parse_int_be(time, 32).expect("7*5bit < 63bit, no overflow possible");
+		let time = Utc.timestamp(unix_time, 0);
+		let signature = RecoverableSignature::from_compact(
+			&Secp256k1::without_caps(),
+			signature,
+			recovery_id
+		)?;
+		let tagged = parse_tagged_parts(tagged)?;
+
+		Ok(RawDataPart {
+			timestamp: time,
+			tagged_fields: tagged,
+			signature: signature,
+		})
 	}
-
-	let time = &data[0..7];
-	let tagged= &data[7..(data.len()-104)];
-	let recoverable_signature = &data[(data.len()-104)..];
-	assert_eq!(time.len(), 7);
-	assert_eq!(recoverable_signature.len(), 104);
-
-	let recoverable_signature_bytes = convert_bits(recoverable_signature, 5, 8, false)?;
-	let signature = &recoverable_signature_bytes[0..64];
-	let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
-
-
-	let unix_time: i64 = parse_int_be(time, 32).expect("7*5bit < 63bit, no overflow possible");
-	let time = Utc.timestamp(unix_time, 0);
-	let signature = RecoverableSignature::from_compact(
-		&Secp256k1::without_caps(),
-		signature,
-		recovery_id
-	)?;
-	let tagged = parse_tagged_parts(tagged)?;
-
-	Ok(RawDataPart {
-		timestamp: time,
-		tagged_fields: tagged,
-		signature: signature,
-	})
 }
 
 fn parse_int_be<T: CheckedAdd + CheckedMul + From<u8> + Default>(digits: &[u8], base: T) -> Option<T> {
