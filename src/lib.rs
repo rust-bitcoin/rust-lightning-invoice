@@ -22,18 +22,50 @@ mod ser;
 /// De- and encoding should not lead to information loss.
 #[derive(Eq, PartialEq, Debug)]
 pub struct RawInvoice {
+	/// human readable part
+	pub hrp: RawHrp,
+
+	/// data part
+	pub data: RawDataPart,
+}
+
+/// Data of the `RawInvoice` that is encoded in the human readable part
+#[derive(Eq, PartialEq, Debug)]
+pub struct RawHrp {
 	/// The currency deferred from the 3rd and 4th character of the bech32 transaction
 	pub currency: Currency,
 
-	/// The amount to pay in pico-satoshis
-	pub amount: Option<u64>,
+	/// The amount that, multiplied by the SI prefix, has to be payed
+	pub raw_amount: Option<u64>,
 
+	/// SI prefix that gets multiplied with the `raw_amount`
+	pub si_prefix: Option<SiPrefix>,
+}
+
+/// Data of the `RawInvoice` that is encoded in the data part
+#[derive(Eq, PartialEq, Debug)]
+pub struct RawDataPart {
+	/// generation time of the invoice
 	pub timestamp: DateTime<Utc>,
 
 	/// tagged fields of the payment request
-	pub tagged: Vec<TaggedField>,
+	pub tagged_fields: Vec<TaggedField>,
 
+	/// signature of the payment request
 	pub signature: RecoverableSignature,
+}
+
+/// SI prefixes for the human readable part
+#[derive(Eq, PartialEq, Debug)]
+pub enum SiPrefix {
+	/// 10^-3
+	Milli,
+	/// 10^-6
+	Micro,
+	/// 10^-9
+	Nano,
+	/// 10^-12
+	Pico,
 }
 
 #[derive(Eq, PartialEq, Debug)]

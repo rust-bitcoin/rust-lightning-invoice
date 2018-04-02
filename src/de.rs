@@ -8,7 +8,7 @@ use std::str::FromStr;
 use bech32;
 use bech32::{Bech32, convert_bits};
 
-use chrono::{DateTime, Utc, TimeZone, Duration};
+use chrono::{Utc, TimeZone, Duration};
 
 use num_traits::{CheckedAdd, CheckedMul};
 
@@ -18,7 +18,7 @@ use secp256k1;
 use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
 use secp256k1::key::PublicKey;
 
-use super::{Currency, TaggedField, Fallback, RouteHop, RawInvoice};
+use super::*;
 
 impl FromStr for super::Currency {
 	type Err = Error;
@@ -32,26 +32,38 @@ impl FromStr for super::Currency {
 	}
 }
 
+impl FromStr for SiPrefix {
+	type Err = Error;
+
+	fn from_str(currency_prefix: &str) -> Result<Self, Error> {
+		use SiPrefix::*;
+		match currency_prefix {
+			"m" => Ok(Milli),
+			"u" => Ok(Micro),
+			"n" => Ok(Nano),
+			"p" => Ok(Pico),
+			_ => Err(Error::UnknownSiPrefix)
+		}
+	}
+}
+
 impl FromStr for RawInvoice {
 	type Err = Error;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		let (hrp, data) = Bech32::from_str_lenient(s)?.into_parts();
 
-		let (currency, amount) = parse_hrp(&hrp)?;
-		let (timestamp, tagged, signature) = parse_data(&data)?;
+		let hrp = parse_hrp(&hrp)?;
+		let data_part = parse_data(&data)?;
 
 		Ok(RawInvoice {
-			currency,
-			amount,
-			timestamp,
-			tagged,
-			signature,
+			hrp: hrp,
+			data: data_part,
 		})
 	}
 }
 
-pub(super) fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>), Error> {
+pub(super) fn parse_hrp(hrp: &str) -> Result<RawHrp, Error> {
 	let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
 	let parts = match re.captures(&hrp) {
 		Some(capture_group) => capture_group,
@@ -66,29 +78,23 @@ pub(super) fn parse_hrp(hrp: &str) -> Result<(Currency, Option<u64>), Error> {
 		None
 	};
 
-	// `get_multiplier(x)` will only return `None` if `x` is not "m", "u", "n" or "p", which
-	// due to the above regex ensures that `get_multiplier(x)` iif `x == ""`, so it's ok to
-	// convert a none to 1BTC aka 10^12pBTC.
-	let multiplier = parts[3].chars().next().and_then(|suffix| {
-		get_multiplier(&suffix)
-	}).unwrap_or(1_000_000_000_000);
+	let si_prefix = &parts[3];
+	let si_prefix: Option<SiPrefix> = if si_prefix.is_empty() {
+		None
+	} else {
+		Some(si_prefix.parse()?)
+	};
 
-	Ok((currency, amount.map(|amount| amount * multiplier)))
-}
-
-fn get_multiplier(multiplier: &char) -> Option<u64> {
-	match multiplier {
-		&'m' => Some(1_000_000_000),
-		&'u' => Some(1_000_000),
-		&'n' => Some(1_000),
-		&'p' => Some(1),
-		_ => None
-	}
+	Ok(RawHrp {
+		currency: currency,
+		raw_amount: amount,
+		si_prefix: si_prefix,
+	})
 }
 
 // why &[u8] instead of Vec<u8>?: split_off reallocs => wouldn't save much cloning,
 // instead split_at is used, which doesn't need ownership of the data
-pub(super) fn parse_data(data: &[u8]) -> Result<(DateTime<Utc>, Vec<TaggedField>, RecoverableSignature), Error> {
+pub(super) fn parse_data(data: &[u8]) -> Result<RawDataPart, Error> {
 	if data.len() < 104 + 7 { // signature + timestamp
 		return Err(Error::TooShortDataPart);
 	}
@@ -113,7 +119,11 @@ pub(super) fn parse_data(data: &[u8]) -> Result<(DateTime<Utc>, Vec<TaggedField>
 	)?;
 	let tagged = parse_tagged_parts(tagged)?;
 
-	Ok((time, tagged, signature))
+	Ok(RawDataPart {
+		timestamp: time,
+		tagged_fields: tagged,
+		signature: signature,
+	})
 }
 
 fn parse_int_be<T: CheckedAdd + CheckedMul + From<u8> + Default>(digits: &[u8], base: T) -> Option<T> {
@@ -308,6 +318,7 @@ pub enum Error {
 	MalformedSignature(secp256k1::Error),
 	BadPrefix,
 	UnknownCurrency,
+	UnknownSiPrefix,
 	MalformedHRP,
 	TooShortDataPart,
 	UnexpectedEndOfTaggedFields,
@@ -357,6 +368,7 @@ impl error::Error for Error {
 			MalformedSignature(_) => "invalid secp256k1 signature",
 			BadPrefix => "did not begin with 'ln'",
 			UnknownCurrency => "currency code unknown",
+			UnknownSiPrefix => "unknown SI prefix",
 			MalformedHRP => "malformed human readable part",
 			TooShortDataPart => "data part too short (should be at least 111 bech32 chars long)",
 			UnexpectedEndOfTaggedFields => "tagged fields part ended unexpectedly",
@@ -561,20 +573,25 @@ mod test {
 			ezhhypd0elx87sjle52x86fux2ypatgddc6k63n7erqz25le42c4u4ecky03ylcqca784w".parse(),
 			Ok(
 				RawInvoice {
-					currency: Currency::Bitcoin,
-					amount: None,
-					timestamp: Utc.timestamp(1496314658, 0),
-					tagged: vec![
-						PaymentHash(*base16!("0001020304050607080900010203040506070809000102030405060708090102")),
-						Description("Please consider supporting this project".into()),
-					],
-					signature: RecoverableSignature::from_compact(
-						&Secp256k1::without_caps(),
-						base16!(
-							"38EC6891345E204145BE8A3A99DE38E98A39D6A569434E1845C8AF7205AFCFCC7F425FCD1463E93C32881EAD0D6E356D467EC8C02553F9AAB15E5738B11F127F"
-						),
-						RecoveryId::from_i32(0).unwrap()
-					).unwrap(),
+					hrp: RawHrp {
+						currency: Currency::Bitcoin,
+						raw_amount: None,
+						si_prefix: None,
+					},
+					data: RawDataPart {
+						timestamp: Utc.timestamp(1496314658, 0),
+						tagged_fields: vec![
+							PaymentHash(*base16!("0001020304050607080900010203040506070809000102030405060708090102")),
+							Description("Please consider supporting this project".into()),
+						],
+						signature: RecoverableSignature::from_compact(
+							&Secp256k1::without_caps(),
+							base16!(
+								"38EC6891345E204145BE8A3A99DE38E98A39D6A569434E1845C8AF7205AFCFCC7F425FCD1463E93C32881EAD0D6E356D467EC8C02553F9AAB15E5738B11F127F"
+							),
+							RecoveryId::from_i32(0).unwrap()
+						).unwrap(),
+					},
 				}
 			)
 		)
