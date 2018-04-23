@@ -146,8 +146,8 @@ fn parse_int_be<T: CheckedAdd + CheckedMul + From<u8> + Default>(digits: &[u8], 
 	)
 }
 
-fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
-	let mut parts = Vec::<TaggedField>::new();
+fn parse_tagged_parts(data: &[u8]) -> Result<Vec<RawTaggedField>, Error> {
+	let mut parts = Vec::<RawTaggedField>::new();
 	let mut data = data;
 
 	while !data.is_empty() {
@@ -167,9 +167,13 @@ fn parse_tagged_parts(data: &[u8]) -> Result<Vec<TaggedField>, Error> {
 
 		data = remaining_data;
 
-		let field = parse_field(tag, field_data)?;
+		let field = parse_field(tag, field_data)?.map_or_else(|| {
+			RawTaggedField::UnknownTag(tag, Vec::from(field_data))
+		},|field| {
+			RawTaggedField::KnownTag(field)
+		});
 
-		field.map(|f| parts.push(f));
+		parts.push(field);
 	}
 	Ok(parts)
 }
@@ -593,8 +597,8 @@ mod test {
 					data: RawDataPart {
 						timestamp: Utc.timestamp(1496314658, 0),
 						tagged_fields: vec![
-							PaymentHash(*base16!("0001020304050607080900010203040506070809000102030405060708090102")),
-							Description("Please consider supporting this project".into()),
+							PaymentHash(*base16!("0001020304050607080900010203040506070809000102030405060708090102")).into(),
+							Description("Please consider supporting this project".into()).into(),
 						],
 						signature: RecoverableSignature::from_compact(
 							&Secp256k1::without_caps(),

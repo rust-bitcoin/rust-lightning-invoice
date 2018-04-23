@@ -16,7 +16,6 @@ use secp256k1::RecoverableSignature;
 mod de;
 mod ser;
 
-// TODO: ensure Information loss guarantee by introducing a unknown tagged field variant
 /// Represents an syntactically correct Invoice for a payment on the lightning network as defined in
 /// [BOLT #11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md).
 /// De- and encoding should not lead to information loss.
@@ -49,7 +48,7 @@ pub struct RawDataPart {
 	pub timestamp: DateTime<Utc>,
 
 	/// tagged fields of the payment request
-	pub tagged_fields: Vec<TaggedField>,
+	pub tagged_fields: Vec<RawTaggedField>,
 
 	/// signature of the payment request
 	pub signature: RecoverableSignature,
@@ -72,6 +71,15 @@ pub enum SiPrefix {
 pub enum Currency {
 	Bitcoin,
 	BitcoinTestnet,
+}
+
+/// Tagged field which may have an unknown tag
+#[derive(Eq, PartialEq, Debug)]
+pub enum RawTaggedField {
+	/// Parsed tagged field with known tag
+	KnownTag(TaggedField),
+	/// tagged field with unknown tag, not parsed
+	UnknownTag(u8, Vec<u8>),
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -115,4 +123,10 @@ pub enum Fallback {
 	},
 	PubKeyHash([u8; 20]),
 	ScriptHash([u8; 20]),
+}
+
+impl From<TaggedField> for RawTaggedField {
+	fn from(tf: TaggedField) -> Self {
+		RawTaggedField::KnownTag(tf)
+	}
 }
