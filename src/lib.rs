@@ -4,10 +4,6 @@ extern crate num_traits;
 extern crate regex;
 extern crate secp256k1;
 
-#[cfg(test)]
-#[macro_use]
-extern crate binary_macros;
-
 use chrono::{DateTime, Utc, Duration};
 
 use secp256k1::key::PublicKey;
@@ -103,15 +99,15 @@ pub struct RouteHop {
 	pub cltv_expiry_delta: u16,
 }
 
-impl TaggedField {
-	const TAG_PAYMENT_HASH: u8 = 1;
-	const TAG_DESCRIPTION: u8 = 13;
-	const TAG_PAYEE_PUB_KEY: u8 = 19;
-	const TAG_DESCRIPTION_HASH: u8 = 23;
-	const TAG_EXPIRY_TIME: u8 = 6;
-	const TAG_MIN_FINAL_CLTV_EXPIRY: u8 = 24;
-	const TAG_FALLBACK: u8 = 9;
-	const TAG_ROUTE: u8 = 3;
+pub mod constants {
+	pub const TAG_PAYMENT_HASH: u8 = 1;
+	pub const TAG_DESCRIPTION: u8 = 13;
+	pub const TAG_PAYEE_PUB_KEY: u8 = 19;
+	pub const TAG_DESCRIPTION_HASH: u8 = 23;
+	pub const TAG_EXPIRY_TIME: u8 = 6;
+	pub const TAG_MIN_FINAL_CLTV_EXPIRY: u8 = 24;
+	pub const TAG_FALLBACK: u8 = 9;
+	pub const TAG_ROUTE: u8 = 3;
 }
 
 // TODO: better types instead onf byte arrays

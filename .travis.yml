@@ -1,4 +1,7 @@
 language: rust
 rust:
-  - 1.24.1
+  - nightly
+  - beta
+  - stable
+  - 1.14.0 # rustc on debian stable
 cache: cargo

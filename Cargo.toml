@@ -8,9 +8,6 @@ license = "Apache-2.0"
 bech32 = {git = "https://github.com/rust-bitcoin/rust-bech32"}
 regex = "0.2"
 chrono = "0.4"
-secp256k1 = "0.8"
-bitcoin = "0.11"
+secp256k1 = "0.9"
+bitcoin = "0.13"
 num-traits = "0.2"
-
-[dev-dependencies]
-binary_macros = "0.6"

@@ -182,14 +182,14 @@ type ParseFieldResult = Result<Option<TaggedField>, Error>;
 
 fn parse_field(tag: u8, field_data: &[u8]) -> ParseFieldResult {
 	match tag {
-		TaggedField::TAG_PAYMENT_HASH => parse_payment_hash(field_data),
-		TaggedField::TAG_DESCRIPTION => parse_description(field_data),
-		TaggedField::TAG_PAYEE_PUB_KEY => parse_payee_pub_key(field_data),
-		TaggedField::TAG_DESCRIPTION_HASH => parse_description_hash(field_data),
-		TaggedField::TAG_EXPIRY_TIME => parse_expiry_time(field_data),
-		TaggedField::TAG_MIN_FINAL_CLTV_EXPIRY => parse_min_final_cltv_expiry(field_data),
-		TaggedField::TAG_FALLBACK => parse_fallback(field_data),
-		TaggedField::TAG_ROUTE => parse_route(field_data),
+		constants::TAG_PAYMENT_HASH => parse_payment_hash(field_data),
+		constants::TAG_DESCRIPTION => parse_description(field_data),
+		constants::TAG_PAYEE_PUB_KEY => parse_payee_pub_key(field_data),
+		constants::TAG_DESCRIPTION_HASH => parse_description_hash(field_data),
+		constants::TAG_EXPIRY_TIME => parse_expiry_time(field_data),
+		constants::TAG_MIN_FINAL_CLTV_EXPIRY => parse_min_final_cltv_expiry(field_data),
+		constants::TAG_FALLBACK => parse_fallback(field_data),
+		constants::TAG_ROUTE => parse_route(field_data),
 		_ => {
 			// "A reader MUST skip over unknown fields"
 			Ok(None)
@@ -425,7 +425,8 @@ impl From<bech32::Error> for Error {
 #[cfg(test)]
 mod test {
 	use TaggedField;
-	use super::*;
+	use de::Error;
+	use secp256k1::{PublicKey, Secp256k1};
 
 	const CHARSET_REV: [i8; 128] = [
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -444,6 +445,8 @@ mod test {
 
 	#[test]
 	fn test_parse_currency_prefix() {
+		use Currency;
+
 		assert_eq!("bc".parse::<Currency>(), Ok(Currency::Bitcoin));
 		assert_eq!("tb".parse::<Currency>(), Ok(Currency::BitcoinTestnet));
 		assert_eq!("something_else".parse::<Currency>(), Err(Error::UnknownCurrency))
@@ -451,6 +454,8 @@ mod test {
 
 	#[test]
 	fn test_parse_int_from_bytes_be() {
+		use de::parse_int_be;
+
 		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4], 256), Some(16909060));
 		assert_eq!(parse_int_be::<u32>(&[1, 3], 32), Some(35));
 		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4, 5], 256), None);
@@ -460,18 +465,26 @@ mod test {
 
 	#[test]
 	fn test_parse_payment_hash() {
+		use de::parse_payment_hash;
+
 		let input = from_bech32(
 			"qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypq".as_bytes()
 		);
 
-		let hash = base16!("0001020304050607080900010203040506070809000102030405060708090102");
-		let expected = Ok(Some(TaggedField::PaymentHash(*hash)));
+		let hash = [
+			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01, 0x02, 0x03,
+			0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+			0x08, 0x09, 0x01, 0x02
+		];
+		let expected = Ok(Some(TaggedField::PaymentHash(hash)));
 
 		assert_eq!(parse_payment_hash(&input), expected);
 	}
 
 	#[test]
 	fn test_parse_description() {
+		use de::parse_description;
+
 		let input = from_bech32("xysxxatsyp3k7enxv4js".as_bytes());
 		let expected = Ok(Some(TaggedField::Description("1 cup coffee".into())));
 		assert_eq!(parse_description(&input), expected);
@@ -479,8 +492,14 @@ mod test {
 
 	#[test]
 	fn test_parse_payee_pub_key() {
+		use de::parse_payee_pub_key;
+
 		let input = from_bech32("q0n326hr8v9zprg8gsvezcch06gfaqqhde2aj730yg0durunfhv66".as_bytes());
-		let pk_bytes = base16!("03E7156AE33B0A208D0744199163177E909E80176E55D97A2F221EDE0F934DD9AD");
+		let pk_bytes = [
+			0x03, 0xe7, 0x15, 0x6a, 0xe3, 0x3b, 0x0a, 0x20, 0x8d, 0x07, 0x44, 0x19, 0x91, 0x63,
+			0x17, 0x7e, 0x90, 0x9e, 0x80, 0x17, 0x6e, 0x55, 0xd9, 0x7a, 0x2f, 0x22, 0x1e, 0xde,
+			0x0f, 0x93, 0x4d, 0xd9, 0xad
+		];
 		let expected = Ok(Some(TaggedField::PayeePubKey(
 			PublicKey::from_slice(&Secp256k1::without_caps(), &pk_bytes[..]).unwrap()
 		)));
@@ -490,18 +509,25 @@ mod test {
 
 	#[test]
 	fn test_parse_description_hash() {
+		use de::parse_description_hash;
+
 		let input = from_bech32(
 			"8yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqs".as_bytes()
 		);
-		let expected = Ok(Some(TaggedField::DescriptionHash(
-			*base16!("3925B6F67E2C340036ED12093DD44E0368DF1B6EA26C53DBE4811F58FD5DB8C1")
-		)));
+		let expected = Ok(Some(TaggedField::DescriptionHash([
+				0x39, 0x25, 0xb6, 0xf6, 0x7e, 0x2c, 0x34, 0x00, 0x36, 0xed, 0x12, 0x09, 0x3d, 0xd4,
+				0x4e, 0x03, 0x68, 0xdf, 0x1b, 0x6e, 0xa2, 0x6c, 0x53, 0xdb, 0xe4, 0x81, 0x1f, 0x58,
+				0xfd, 0x5d, 0xb8, 0xc1
+		])));
 
 		assert_eq!(parse_description_hash(&input), expected);
 	}
 
 	#[test]
 	fn test_parse_expiry_time() {
+		use de::parse_expiry_time;
+		use chrono::Duration;
+
 		let input = from_bech32("pu".as_bytes());
 		let expected = Ok(Some(TaggedField::ExpiryTime(
 			Duration::seconds(60)
@@ -513,6 +539,8 @@ mod test {
 
 	#[test]
 	fn test_parse_min_final_cltv_expiry() {
+		use de::parse_min_final_cltv_expiry;
+
 		let input = from_bech32("pr".as_bytes());
 		let expected = Ok(Some(TaggedField::MinFinalCltvExpiry(35)));
 
@@ -521,20 +549,32 @@ mod test {
 
 	#[test]
 	fn test_parse_fallback() {
+		use de::parse_fallback;
+		use Fallback;
+
 		let cases = vec![
 			(
 				from_bech32("3x9et2e20v6pu37c5d9vax37wxq72un98".as_bytes()),
-				Fallback::PubKeyHash(*base16!("3172B5654F6683C8FB146959D347CE303CAE4CA7"))
+				Fallback::PubKeyHash([
+					0x31, 0x72, 0xb5, 0x65, 0x4f, 0x66, 0x83, 0xc8, 0xfb, 0x14, 0x69, 0x59, 0xd3,
+					0x47, 0xce, 0x30, 0x3c, 0xae, 0x4c, 0xa7
+				])
 			),
 			(
 				from_bech32("j3a24vwu6r8ejrss3axul8rxldph2q7z9".as_bytes()),
-				Fallback::ScriptHash(*base16!("8F55563B9A19F321C211E9B9F38CDF686EA07845"))
+				Fallback::ScriptHash([
+					0x8f, 0x55, 0x56, 0x3b, 0x9a, 0x19, 0xf3, 0x21, 0xc2, 0x11, 0xe9, 0xb9, 0xf3,
+					0x8c, 0xdf, 0x68, 0x6e, 0xa0, 0x78, 0x45
+				])
 			),
 			(
 				from_bech32("qw508d6qejxtdg4y5r3zarvary0c5xw7k".as_bytes()),
 				Fallback::SegWitProgram {
 					version: 0,
-					program: Vec::from(&base16!("751E76E8199196D454941C45D1B3A323F1433BD6")[..])
+					program: Vec::from(&[
+						0x75u8, 0x1e, 0x76, 0xe8, 0x19, 0x91, 0x96, 0xd4, 0x54, 0x94, 0x1c, 0x45,
+						0xd1, 0xb3, 0xa3, 0x23, 0xf1, 0x43, 0x3b, 0xd6
+					][..])
 				}
 			)
 		];
@@ -546,6 +586,9 @@ mod test {
 
 	#[test]
 	fn test_parse_route() {
+		use RouteHop;
+		use de::parse_route;
+
 		let input = from_bech32(
 			"q20q82gphp2nflc7jtzrcazrra7wwgzxqc8u7754cdlpfrmccae92qgzqvzq2ps8pqqqqqqpqqqqq9qqqvpeuqa\
 			fqxu92d8lr6fvg0r5gv0heeeqgcrqlnm6jhphu9y00rrhy4grqszsvpcgpy9qqqqqqgqqqqq7qqzq".as_bytes()
@@ -555,9 +598,13 @@ mod test {
 		expected.push(RouteHop {
 			pubkey: PublicKey::from_slice(
 				&Secp256k1::without_caps(),
-				&base16!("029E03A901B85534FF1E92C43C74431F7CE72046060FCF7A95C37E148F78C77255")[..]
+				&[
+					0x02u8, 0x9e, 0x03, 0xa9, 0x01, 0xb8, 0x55, 0x34, 0xff, 0x1e, 0x92, 0xc4, 0x3c,
+					0x74, 0x43, 0x1f, 0x7c, 0xe7, 0x20, 0x46, 0x06, 0x0f, 0xcf, 0x7a, 0x95, 0xc3,
+					0x7e, 0x14, 0x8f, 0x78, 0xc7, 0x72, 0x55
+				][..]
 			).unwrap(),
-			short_channel_id: *base16!("0102030405060708"),
+			short_channel_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
 			fee_base_msat: 1,
 			fee_proportional_millionths: 20,
 			cltv_expiry_delta: 3
@@ -565,9 +612,13 @@ mod test {
 		expected.push(RouteHop {
 			pubkey: PublicKey::from_slice(
 				&Secp256k1::without_caps(),
-				&base16!("039E03A901B85534FF1E92C43C74431F7CE72046060FCF7A95C37E148F78C77255")[..]
+				&[
+					0x03u8, 0x9e, 0x03, 0xa9, 0x01, 0xb8, 0x55, 0x34, 0xff, 0x1e, 0x92, 0xc4, 0x3c,
+					0x74, 0x43, 0x1f, 0x7c, 0xe7, 0x20, 0x46, 0x06, 0x0f, 0xcf, 0x7a, 0x95, 0xc3,
+					0x7e, 0x14, 0x8f, 0x78, 0xc7, 0x72, 0x55
+				][..]
 			).unwrap(),
-			short_channel_id: *base16!("030405060708090A"),
+			short_channel_id: [0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a],
 			fee_base_msat: 2,
 			fee_proportional_millionths: 30,
 			cltv_expiry_delta: 4
@@ -578,10 +629,10 @@ mod test {
 
 	#[test]
 	fn test_raw_invoice_deserialization() {
-		use super::*;
-		use super::TaggedField::*;
+		use TaggedField::*;
 		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
 		use chrono::{Utc, TimeZone};
+		use {RawInvoice, RawHrp, RawDataPart, Currency};
 
 		assert_eq!(
 			"lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmw\
@@ -597,14 +648,23 @@ mod test {
 					data: RawDataPart {
 						timestamp: Utc.timestamp(1496314658, 0),
 						tagged_fields: vec![
-							PaymentHash(*base16!("0001020304050607080900010203040506070809000102030405060708090102")).into(),
+							PaymentHash([
+								0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
+								0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
+								0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
+							]).into(),
 							Description("Please consider supporting this project".into()).into(),
 						],
 						signature: RecoverableSignature::from_compact(
 							&Secp256k1::without_caps(),
-							base16!(
-								"38EC6891345E204145BE8A3A99DE38E98A39D6A569434E1845C8AF7205AFCFCC7F425FCD1463E93C32881EAD0D6E356D467EC8C02553F9AAB15E5738B11F127F"
-							),
+							&[
+								0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
+								0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
+								0x4e, 0x18, 0x45, 0xc8, 0xaf, 0x72, 0x05, 0xaf, 0xcf, 0xcc, 0x7f,
+								0x42, 0x5f, 0xcd, 0x14, 0x63, 0xe9, 0x3c, 0x32, 0x88, 0x1e, 0xad,
+								0x0d, 0x6e, 0x35, 0x6d, 0x46, 0x7e, 0xc8, 0xc0, 0x25, 0x53, 0xf9,
+								0xaa, 0xb1, 0x5e, 0x57, 0x38, 0xb1, 0x1f, 0x12, 0x7f
+							],
 							RecoveryId::from_i32(0).unwrap()
 						).unwrap(),
 					},
