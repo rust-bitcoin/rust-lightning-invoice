@@ -6,7 +6,7 @@ use std::str;
 use std::str::FromStr;
 
 use bech32;
-use bech32::{Bech32, convert_bits};
+use bech32::{Bech32, u5, FromBase32};
 
 use chrono::{Utc, TimeZone, Duration};
 
@@ -19,13 +19,6 @@ use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
 use secp256k1::key::PublicKey;
 
 use super::*;
-
-trait FromBase32: Sized {
-	type Err;
-
-	fn from_base32(bytes_5b: &[u8]) -> Result<Self, Self::Err>;
-}
-
 impl FromStr for super::Currency {
 	type Err = Error;
 
@@ -105,7 +98,7 @@ impl FromStr for RawHrp {
 impl FromBase32 for RawDataPart {
 	type Err = Error;
 
-	fn from_base32(data: &[u8]) -> Result<Self, Self::Err> {
+	fn from_base32(data: &[u5]) -> Result<Self, Self::Err> {
 		if data.len() < 104 + 7 { // signature + timestamp
 			return Err(Error::TooShortDataPart);
 		}
@@ -116,7 +109,7 @@ impl FromBase32 for RawDataPart {
 		assert_eq!(time.len(), 7);
 		assert_eq!(recoverable_signature.len(), 104);
 
-		let recoverable_signature_bytes = convert_bits(recoverable_signature, 5, 8, false)?;
+		let recoverable_signature_bytes = Vec::<u8>::from_base32(recoverable_signature)?;
 		let signature = &recoverable_signature_bytes[0..64];
 		let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
 
@@ -138,15 +131,18 @@ impl FromBase32 for RawDataPart {
 	}
 }
 
-fn parse_int_be<T: CheckedAdd + CheckedMul + From<u8> + Default>(digits: &[u8], base: T) -> Option<T> {
+fn parse_int_be<T, U>(digits: &[U], base: T) -> Option<T>
+	where T: CheckedAdd + CheckedMul + From<u8> + Default,
+	      U: Into<u8> + Copy
+{
 	digits.iter().fold(Some(Default::default()), |acc, b|
 		acc
 			.and_then(|x| x.checked_mul(&base))
-			.and_then(|x| x.checked_add(&(*b).into()))
+			.and_then(|x| x.checked_add(&(Into::<u8>::into(*b)).into()))
 	)
 }
 
-fn parse_tagged_parts(data: &[u8]) -> Result<Vec<RawTaggedField>, Error> {
+fn parse_tagged_parts(data: &[u5]) -> Result<Vec<RawTaggedField>, Error> {
 	let mut parts = Vec::<RawTaggedField>::new();
 	let mut data = data;
 
@@ -180,8 +176,8 @@ fn parse_tagged_parts(data: &[u8]) -> Result<Vec<RawTaggedField>, Error> {
 
 type ParseFieldResult = Result<Option<TaggedField>, Error>;
 
-fn parse_field(tag: u8, field_data: &[u8]) -> ParseFieldResult {
-	match tag {
+fn parse_field(tag: u5, field_data: &[u5]) -> ParseFieldResult {
+	match tag.to_u8() {
 		constants::TAG_PAYMENT_HASH => parse_payment_hash(field_data),
 		constants::TAG_DESCRIPTION => parse_description(field_data),
 		constants::TAG_PAYEE_PUB_KEY => parse_payee_pub_key(field_data),
@@ -197,47 +193,47 @@ fn parse_field(tag: u8, field_data: &[u8]) -> ParseFieldResult {
 	}
 }
 
-fn parse_payment_hash(field_data: &[u8]) -> ParseFieldResult {
+fn parse_payment_hash(field_data: &[u5]) -> ParseFieldResult {
 	if field_data.len() != 52 {
 		// "A reader MUST skip over […] a p […] field that does not have data_length 52 […]."
 		Ok(None)
 	} else {
 		let mut hash: [u8; 32] = Default::default();
-		hash.copy_from_slice(&convert_bits(field_data, 5, 8, false)?);
+		hash.copy_from_slice(&Vec::<u8>::from_base32(field_data)?);
 		Ok(Some(TaggedField::PaymentHash(hash)))
 	}
 }
 
-fn parse_description(field_data: &[u8]) -> ParseFieldResult {
-	let bytes = convert_bits(field_data, 5, 8, false)?;
+fn parse_description(field_data: &[u5]) -> ParseFieldResult {
+	let bytes = Vec::<u8>::from_base32(field_data)?;
 	let description = String::from(str::from_utf8(&bytes)?);
 	Ok(Some(TaggedField::Description(description)))
 }
 
-fn parse_payee_pub_key(field_data: &[u8]) -> ParseFieldResult {
+fn parse_payee_pub_key(field_data: &[u5]) -> ParseFieldResult {
 	if field_data.len() != 53 {
 		// "A reader MUST skip over […] a n […] field that does not have data_length 53 […]."
 		Ok(None)
 	} else {
-		let data_bytes = convert_bits(field_data, 5, 8, false)?;
+		let data_bytes = Vec::<u8>::from_base32(field_data)?;
 		let pub_key = PublicKey::from_slice(&Secp256k1::without_caps(), &data_bytes)?;
 		Ok(Some(TaggedField::PayeePubKey(pub_key)))
 	}
 }
 
-fn parse_description_hash(field_data: &[u8]) -> ParseFieldResult {
+fn parse_description_hash(field_data: &[u5]) -> ParseFieldResult {
 	if field_data.len() != 52 {
 		// "A reader MUST skip over […] a h […] field that does not have data_length 52 […]."
 		Ok(None)
 	} else {
 		let mut hash: [u8; 32] = Default::default();
-		hash.copy_from_slice(&convert_bits(field_data, 5, 8, false)?);
+		hash.copy_from_slice(&Vec::<u8>::from_base32(field_data)?);
 		Ok(Some(TaggedField::DescriptionHash(hash)))
 	}
 }
 
-fn parse_expiry_time(field_data: &[u8]) -> ParseFieldResult {
-	let expiry = parse_int_be::<i64>(field_data, 32);
+fn parse_expiry_time(field_data: &[u5]) -> ParseFieldResult {
+	let expiry = parse_int_be::<i64, u5>(field_data, 32);
 	if let Some(expiry) = expiry {
 		Ok(Some(TaggedField::ExpiryTime(Duration::seconds(expiry))))
 	} else {
@@ -245,8 +241,8 @@ fn parse_expiry_time(field_data: &[u8]) -> ParseFieldResult {
 	}
 }
 
-fn parse_min_final_cltv_expiry(field_data: &[u8]) -> ParseFieldResult {
-	let expiry = parse_int_be::<u64>(field_data, 32);
+fn parse_min_final_cltv_expiry(field_data: &[u5]) -> ParseFieldResult {
+	let expiry = parse_int_be::<u64, u5>(field_data, 32);
 	if let Some(expiry) = expiry {
 		Ok(Some(TaggedField::MinFinalCltvExpiry(expiry)))
 	} else {
@@ -254,15 +250,15 @@ fn parse_min_final_cltv_expiry(field_data: &[u8]) -> ParseFieldResult {
 	}
 }
 
-fn parse_fallback(field_data: &[u8]) -> ParseFieldResult {
+fn parse_fallback(field_data: &[u5]) -> ParseFieldResult {
 	if field_data.len() < 1 {
 		return Err(Error::UnexpectedEndOfTaggedFields);
 	}
 
 	let version = field_data[0];
-	let bytes = convert_bits(&field_data[1..], 5, 8, false)?;
+	let bytes = Vec::<u8>::from_base32(&field_data[1..])?;
 
-	let fallback_address = match version {
+	let fallback_address = match version.to_u8() {
 		v @ 0...16 => {
 			if bytes.len() < 2 || bytes.len() > 40 {
 				return Err(Error::InvalidSegWitProgramLength);
@@ -296,8 +292,8 @@ fn parse_fallback(field_data: &[u8]) -> ParseFieldResult {
 	Ok(fallback_address.map(|addr| TaggedField::Fallback(addr)))
 }
 
-fn parse_route(field_data: &[u8]) -> ParseFieldResult {
-	let bytes = convert_bits(field_data, 5, 8, false)?;
+fn parse_route(field_data: &[u5]) -> ParseFieldResult {
+	let bytes = Vec::<u8>::from_base32(field_data)?;
 
 	if bytes.len() % 51 != 0 {
 		return Err(Error::UnexpectedEndOfTaggedFields);
@@ -427,6 +423,7 @@ mod test {
 	use TaggedField;
 	use de::Error;
 	use secp256k1::{PublicKey, Secp256k1};
+	use bech32::u5;
 
 	const CHARSET_REV: [i8; 128] = [
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -439,8 +436,11 @@ mod test {
 		1, 0, 3, 16, 11, 28, 12, 14, 6, 4, 2, -1, -1, -1, -1, -1
 	];
 
-	fn from_bech32(bytes_5b: &[u8]) -> Vec<u8> {
-		bytes_5b.iter().map(|c| CHARSET_REV[*c as usize] as u8).collect()
+	fn from_bech32(bytes_5b: &[u8]) -> Vec<u5> {
+		bytes_5b
+			.iter()
+			.map(|c| u5::try_from_u8(CHARSET_REV[*c as usize] as u8).unwrap())
+			.collect()
 	}
 
 	#[test]
@@ -456,9 +456,9 @@ mod test {
 	fn test_parse_int_from_bytes_be() {
 		use de::parse_int_be;
 
-		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4], 256), Some(16909060));
-		assert_eq!(parse_int_be::<u32>(&[1, 3], 32), Some(35));
-		assert_eq!(parse_int_be::<u32>(&[1, 2, 3, 4, 5], 256), None);
+		assert_eq!(parse_int_be::<u32, u8>(&[1, 2, 3, 4], 256), Some(16909060));
+		assert_eq!(parse_int_be::<u32, u8>(&[1, 3], 32), Some(35));
+		assert_eq!(parse_int_be::<u32, u8>(&[1, 2, 3, 4, 5], 256), None);
 	}
 
 	//TODO: test error conditions

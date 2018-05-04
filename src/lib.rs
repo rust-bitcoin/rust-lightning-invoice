@@ -4,6 +4,8 @@ extern crate num_traits;
 extern crate regex;
 extern crate secp256k1;
 
+use bech32::u5;
+
 use chrono::{DateTime, Utc, Duration};
 
 use secp256k1::key::PublicKey;
@@ -75,7 +77,7 @@ pub enum RawTaggedField {
 	/// Parsed tagged field with known tag
 	KnownTag(TaggedField),
 	/// tagged field with unknown tag, not parsed
-	UnknownTag(u8, Vec<u8>),
+	UnknownTag(u5, Vec<u5>),
 }
 
 #[derive(Eq, PartialEq, Debug)]
