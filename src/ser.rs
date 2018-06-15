@@ -93,12 +93,12 @@ fn encode_int_be_base32(int: u64) -> Vec<u5> {
 	out_vec
 }
 
-fn encode_int_be_base256(int: u64) -> Vec<u8> {
+fn encode_int_be_base256<T: Into<u64>>(int: T) -> Vec<u8> {
 	let base = 256u64;
 
 	let mut out_vec = Vec::<u8>::new();
 
-	let mut rem_int = int;
+	let mut rem_int: u64 = int.into();
 	while rem_int != 0 {
 		out_vec.push((rem_int % base) as u8);
 		rem_int /= base;
@@ -165,7 +165,108 @@ impl<'f> ToBase32<Vec<u5>> for RawTaggedField {
 
 impl ToBase32<Vec<u5>> for TaggedField {
 	fn to_base32(&self) -> Vec<u5> {
-		unimplemented!();
+		let (tag, data) = match *self {
+			TaggedField::PaymentHash(ref hash) => {
+				(constants::TAG_PAYMENT_HASH, hash.to_base32())
+			},
+			TaggedField::Description(ref description) => {
+				let data = description.as_bytes().to_base32();
+				// FIXME: ensure string length by type (newtype)
+				assert!(data.len() < 1024);
+				(constants::TAG_DESCRIPTION, data)
+			},
+			TaggedField::PayeePubKey(ref pub_key) => {
+				(constants::TAG_PAYEE_PUB_KEY, (&pub_key.serialize()[..]).to_base32())
+			},
+			TaggedField::DescriptionHash(ref hash) => {
+				(constants::TAG_DESCRIPTION_HASH, hash.to_base32())
+			},
+			TaggedField::ExpiryTime(duration) => {
+				// FIXME: ensure duration range by type
+				assert!(duration.num_seconds() >= 0);
+				let data = encode_int_be_base32(duration.num_seconds() as u64);
+				(constants::TAG_EXPIRY_TIME, data)
+			},
+			TaggedField::MinFinalCltvExpiry(expiry) => {
+				(constants::TAG_MIN_FINAL_CLTV_EXPIRY, encode_int_be_base32(expiry))
+			},
+			TaggedField::Fallback(ref fallback_address) => {
+				let data = match *fallback_address {
+					Fallback::SegWitProgram {version: v, program: ref p} => {
+						let mut data = Vec::<u5>::with_capacity(1);
+						data.push(v);
+						data.extend_from_slice(&p.to_base32());
+						data
+					},
+					Fallback::PubKeyHash(ref hash) => {
+						let mut data = Vec::<u5>::with_capacity(1);
+						data.push(u5::try_from_u8(17).unwrap());
+						data.extend_from_slice(&hash.to_base32());
+						data
+					},
+					Fallback::ScriptHash(ref hash) => {
+						let mut data = Vec::<u5>::with_capacity(1);
+						data.push(u5::try_from_u8(18).unwrap());
+						data.extend_from_slice(&hash.to_base32());
+						data
+					}
+				};
+				(constants::TAG_FALLBACK, data)
+			},
+			TaggedField::Route(ref route_hops) => {
+				let mut bytes = Vec::<u8>::new();
+				for hop in route_hops.iter() {
+					bytes.extend_from_slice(&hop.pubkey.serialize()[..]);
+					bytes.extend_from_slice(&hop.short_channel_id[..]);
+
+					let fee_base_msat = try_stretch(
+						encode_int_be_base256(hop.fee_base_msat),
+						4
+					).expect("sizeof(u32) == 4");
+					bytes.extend_from_slice(&fee_base_msat);
+
+					let fee_proportional_millionths = try_stretch(
+						encode_int_be_base256(hop.fee_proportional_millionths),
+						4
+					).expect("sizeof(u32) == 4");
+					bytes.extend_from_slice(&fee_proportional_millionths);
+
+					let cltv_expiry_delta = try_stretch(
+						encode_int_be_base256(hop.cltv_expiry_delta),
+						2
+					).expect("sizeof(u16) == 2");
+					bytes.extend_from_slice(&cltv_expiry_delta);
+				}
+
+				assert_eq!(
+					bytes.len() % 51,
+					0,
+					"One hop is 51 bytes long, so all hops should be a multiple of that long."
+				);
+
+				let data = bytes.to_base32();
+
+				// FIXME: ensure max len by type
+				assert!(data.len() < 1024);
+
+				(constants::TAG_ROUTE, data)
+			},
+		};
+
+		assert!(data.len() < 1024, "Every tagged field data can be at most 1023 bytes long.");
+
+		let mut sized_data = Vec::<u5>::with_capacity(data.len() + 3);
+		// TODO: think about saving tag constants as u5c
+		sized_data.push(u5::try_from_u8(tag).expect("Tags should be <32."));
+		sized_data.extend_from_slice(
+			&try_stretch(
+				encode_int_be_base32(data.len() as u64),
+				2
+			).expect("Can't be longer than 2, see assert above.")
+		);
+		sized_data.extend_from_slice(&data);
+
+		sized_data
 	}
 }
 

@@ -258,13 +258,13 @@ fn parse_fallback(field_data: &[u5]) -> ParseFieldResult {
 	let bytes = Vec::<u8>::from_base32(&field_data[1..])?;
 
 	let fallback_address = match version.to_u8() {
-		v @ 0...16 => {
+		0...16 => {
 			if bytes.len() < 2 || bytes.len() > 40 {
 				return Err(Error::InvalidSegWitProgramLength);
 			}
 
 			Some(Fallback::SegWitProgram {
-				version: v,
+				version: version,
 				program: bytes
 			})
 		},
@@ -569,7 +569,7 @@ mod test {
 			(
 				from_bech32("qw508d6qejxtdg4y5r3zarvary0c5xw7k".as_bytes()),
 				Fallback::SegWitProgram {
-					version: 0,
+					version: u5::try_from_u8(0).unwrap(),
 					program: Vec::from(&[
 						0x75u8, 0x1e, 0x76, 0xe8, 0x19, 0x91, 0x96, 0xd4, 0x54, 0x94, 0x1c, 0x45,
 						0xd1, 0xb3, 0xa3, 0x23, 0xf1, 0x43, 0x3b, 0xd6

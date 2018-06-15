@@ -117,7 +117,7 @@ pub mod constants {
 #[derive(Eq, PartialEq, Debug)]
 pub enum Fallback {
 	SegWitProgram {
-		version: u8,
+		version: u5,
 		program: Vec<u8>,
 	},
 	PubKeyHash([u8; 20]),
