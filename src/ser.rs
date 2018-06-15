@@ -1,13 +1,10 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::ops::{Rem, Div, Sub};
-
 use bech32::{Bech32, ToBase32, u5};
 
-use num_traits::checked_pow;
+use secp256k1::Secp256k1;
 
 use ::*;
-use num_traits::real::Real;
 
 
 trait TryIntoInt<T> {
@@ -128,25 +125,66 @@ fn try_stretch<T>(mut in_vec: Vec<T>, target_len: usize) -> Option<Vec<T>>
 
 impl ToBase32<Vec<u5>> for RawDataPart {
 	fn to_base32(&self) -> Vec<u5> {
-		//TODO: continue here
-		unimplemented!()
+		let mut encoded = Vec::<u5>::new();
+
+		// encode timestamp
+		encoded.extend(&encode_int_be_base32(self.timestamp));
+
+		// encode tagged fields
+		for tagged_field in self.tagged_fields.iter() {
+			encoded.extend(tagged_field.to_base32().iter());
+		}
+
+		// TODO: refactor to avoid copying (maybe using iterable byte array builder?)
+		// encode signature
+		let (recovery_id, signature) = self.signature.serialize_compact(&Secp256k1::without_caps());
+		let mut signature_bytes = Vec::<u8>::with_capacity(65);
+		signature_bytes.extend_from_slice(&signature[..]);
+		signature_bytes.push(recovery_id.to_i32() as u8); // can only be in range 0..4
+		encoded.extend(signature_bytes.to_base32());
+
+		encoded
+	}
+}
+
+impl<'f> ToBase32<Vec<u5>> for RawTaggedField {
+	fn to_base32(&self) -> Vec<u5> {
+		match *self {
+			RawTaggedField::UnknownTag(tag, ref content) => {
+				let mut encoded = Vec::<u5>::with_capacity(content.len() + 1);
+				encoded.push(tag);
+				encoded.extend_from_slice(content);
+				encoded
+			},
+			RawTaggedField::KnownTag(ref tagged_field) => {
+				tagged_field.to_base32()
+			}
+		}
+	}
+}
+
+impl ToBase32<Vec<u5>> for TaggedField {
+	fn to_base32(&self) -> Vec<u5> {
+		unimplemented!();
 	}
 }
 
 #[cfg(test)]
 mod test {
-	use ::*;
-	use super::*;
 	use bech32::CheckBase32;
 
 	#[test]
 	fn test_currency_code() {
+		use Currency;
+
 		assert_eq!("bc", Currency::Bitcoin.to_string());
 		assert_eq!("tb", Currency::BitcoinTestnet.to_string());
 	}
 
 	#[test]
 	fn test_raw_hrp() {
+		use ::{Currency, RawHrp, SiPrefix};
+
 		let hrp = RawHrp {
 			currency: Currency::Bitcoin,
 			raw_amount: Some(100),
@@ -158,6 +196,8 @@ mod test {
 
 	#[test]
 	fn test_encode_int_be_base32() {
+		use ser::encode_int_be_base32;
+
 		let input: u64 = 33764;
 		let expected_out = CheckBase32::check_base32(&[1, 0, 31, 4]).unwrap();
 
@@ -166,6 +206,8 @@ mod test {
 
 	#[test]
 	fn test_encode_int_be_base256() {
+		use ser::encode_int_be_base256;
+
 		let input: u64 = 16842530;
 		let expected_out = vec![1, 0, 255, 34];
 

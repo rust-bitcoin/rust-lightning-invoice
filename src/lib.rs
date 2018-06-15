@@ -6,7 +6,7 @@ extern crate secp256k1;
 
 use bech32::u5;
 
-use chrono::{DateTime, Utc, Duration};
+use chrono::Duration;
 
 use secp256k1::key::PublicKey;
 use secp256k1::RecoverableSignature;
@@ -42,8 +42,9 @@ pub struct RawHrp {
 /// Data of the `RawInvoice` that is encoded in the data part
 #[derive(Eq, PartialEq, Debug)]
 pub struct RawDataPart {
-	/// generation time of the invoice
-	pub timestamp: DateTime<Utc>,
+	// TODO: find better fitting type that only allows positive timestamps to avoid checks for negative timestamps when encoding
+	/// generation time of the invoice as UNIX timestamp
+	pub timestamp: u64,
 
 	/// tagged fields of the payment request
 	pub tagged_fields: Vec<RawTaggedField>,

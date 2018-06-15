@@ -8,7 +8,7 @@ use std::str::FromStr;
 use bech32;
 use bech32::{Bech32, u5, FromBase32};
 
-use chrono::{Utc, TimeZone, Duration};
+use chrono::{Duration};
 
 use num_traits::{CheckedAdd, CheckedMul};
 
@@ -114,8 +114,7 @@ impl FromBase32 for RawDataPart {
 		let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
 
 
-		let unix_time: i64 = parse_int_be(time, 32).expect("7*5bit < 63bit, no overflow possible");
-		let time = Utc.timestamp(unix_time, 0);
+		let timestamp: u64 = parse_int_be(time, 32).expect("7*5bit < 64bit, no overflow possible");
 		let signature = RecoverableSignature::from_compact(
 			&Secp256k1::without_caps(),
 			signature,
@@ -124,7 +123,7 @@ impl FromBase32 for RawDataPart {
 		let tagged = parse_tagged_parts(tagged)?;
 
 		Ok(RawDataPart {
-			timestamp: time,
+			timestamp: timestamp,
 			tagged_fields: tagged,
 			signature: signature,
 		})
@@ -631,7 +630,6 @@ mod test {
 	fn test_raw_invoice_deserialization() {
 		use TaggedField::*;
 		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
-		use chrono::{Utc, TimeZone};
 		use {RawInvoice, RawHrp, RawDataPart, Currency};
 
 		assert_eq!(
@@ -646,7 +644,7 @@ mod test {
 						si_prefix: None,
 					},
 					data: RawDataPart {
-						timestamp: Utc.timestamp(1496314658, 0),
+						timestamp: 1496314658,
 						tagged_fields: vec![
 							PaymentHash([
 								0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
