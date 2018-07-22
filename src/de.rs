@@ -8,7 +8,7 @@ use std::str::FromStr;
 use bech32;
 use bech32::{Bech32, u5, FromBase32};
 
-use chrono::{Duration};
+use std::time::{Duration};
 
 use num_traits::{CheckedAdd, CheckedMul};
 
@@ -232,9 +232,9 @@ fn parse_description_hash(field_data: &[u5]) -> ParseFieldResult {
 }
 
 fn parse_expiry_time(field_data: &[u5]) -> ParseFieldResult {
-	let expiry = parse_int_be::<i64, u5>(field_data, 32);
+	let expiry = parse_int_be::<u64, u5>(field_data, 32);
 	if let Some(expiry) = expiry {
-		Ok(Some(TaggedField::ExpiryTime(Duration::seconds(expiry))))
+		Ok(Some(TaggedField::ExpiryTime(Duration::from_secs(expiry))))
 	} else {
 		Err(Error::IntegerOverflowError)
 	}
@@ -525,11 +525,11 @@ mod test {
 	#[test]
 	fn test_parse_expiry_time() {
 		use de::parse_expiry_time;
-		use chrono::Duration;
+		use std::time::Duration;
 
 		let input = from_bech32("pu".as_bytes());
 		let expected = Ok(Some(TaggedField::ExpiryTime(
-			Duration::seconds(60)
+			Duration::from_secs(60)
 		)));
 
 		assert_eq!(parse_expiry_time(&input), expected);

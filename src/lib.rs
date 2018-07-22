@@ -1,12 +1,11 @@
 extern crate bech32;
-extern crate chrono;
 extern crate num_traits;
 extern crate regex;
 extern crate secp256k1;
 
 use bech32::u5;
 
-use chrono::Duration;
+use std::time::{Duration};
 
 use secp256k1::key::PublicKey;
 use secp256k1::RecoverableSignature;
