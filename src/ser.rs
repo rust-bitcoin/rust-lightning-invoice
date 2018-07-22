@@ -183,8 +183,7 @@ impl ToBase32<Vec<u5>> for TaggedField {
 			},
 			TaggedField::ExpiryTime(duration) => {
 				// FIXME: ensure duration range by type
-				assert!(duration.num_seconds() >= 0);
-				let data = encode_int_be_base32(duration.num_seconds() as u64);
+				let data = encode_int_be_base32(duration.as_secs());
 				(constants::TAG_EXPIRY_TIME, data)
 			},
 			TaggedField::MinFinalCltvExpiry(expiry) => {
