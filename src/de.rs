@@ -8,8 +8,6 @@ use std::str::FromStr;
 use bech32;
 use bech32::{Bech32, u5, FromBase32};
 
-use chrono::{Duration};
-
 use num_traits::{CheckedAdd, CheckedMul};
 
 use regex::Regex;
@@ -20,34 +18,34 @@ use secp256k1::key::PublicKey;
 
 use super::*;
 impl FromStr for super::Currency {
-	type Err = Error;
+	type Err = ParseError;
 
-	fn from_str(currency_prefix: &str) -> Result<Self, Error> {
+	fn from_str(currency_prefix: &str) -> Result<Self, ParseError> {
 		match currency_prefix {
 			"bc" => Ok(Currency::Bitcoin),
 			"tb" => Ok(Currency::BitcoinTestnet),
-			_ => Err(Error::UnknownCurrency)
+			_ => Err(ParseError::UnknownCurrency)
 		}
 	}
 }
 
 impl FromStr for SiPrefix {
-	type Err = Error;
+	type Err = ParseError;
 
-	fn from_str(currency_prefix: &str) -> Result<Self, Error> {
+	fn from_str(currency_prefix: &str) -> Result<Self, ParseError> {
 		use SiPrefix::*;
 		match currency_prefix {
 			"m" => Ok(Milli),
 			"u" => Ok(Micro),
 			"n" => Ok(Nano),
 			"p" => Ok(Pico),
-			_ => Err(Error::UnknownSiPrefix)
+			_ => Err(ParseError::UnknownSiPrefix)
 		}
 	}
 }
 
 impl FromStr for RawInvoice {
-	type Err = Error;
+	type Err = ParseError;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		let (hrp, data) = Bech32::from_str_lenient(s)?.into_parts();
@@ -63,13 +61,13 @@ impl FromStr for RawInvoice {
 }
 
 impl FromStr for RawHrp {
-	type Err = Error;
+	type Err = ParseError;
 
 	fn from_str(hrp: &str) -> Result<Self, <Self as FromStr>::Err> {
 		let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
 		let parts = match re.captures(&hrp) {
 			Some(capture_group) => capture_group,
-			None => return Err(Error::MalformedHRP)
+			None => return Err(ParseError::MalformedHRP)
 		};
 
 		let currency = parts[1].parse::<Currency>()?;
@@ -96,11 +94,11 @@ impl FromStr for RawHrp {
 }
 
 impl FromBase32 for RawDataPart {
-	type Err = Error;
+	type Err = ParseError;
 
 	fn from_base32(data: &[u5]) -> Result<Self, Self::Err> {
 		if data.len() < 104 + 7 { // signature + timestamp
-			return Err(Error::TooShortDataPart);
+			return Err(ParseError::TooShortDataPart);
 		}
 
 		let time = &data[0..7];
@@ -141,189 +139,228 @@ fn parse_int_be<T, U>(digits: &[U], base: T) -> Option<T>
 	)
 }
 
-fn parse_tagged_parts(data: &[u5]) -> Result<Vec<RawTaggedField>, Error> {
+fn parse_tagged_parts(data: &[u5]) -> Result<Vec<RawTaggedField>, ParseError> {
 	let mut parts = Vec::<RawTaggedField>::new();
 	let mut data = data;
 
 	while !data.is_empty() {
 		if data.len() < 3 {
-			return Err(Error::UnexpectedEndOfTaggedFields);
+			return Err(ParseError::UnexpectedEndOfTaggedFields);
 		}
-		let (meta, remaining_data) = data.split_at(3);
-		let (tag, len) = meta.split_at(1);
 
-		let len: usize = parse_int_be(len, 32).expect("can't overflow");
-		let tag = tag[0];
+		// Ignore tag at data[0], it will be handled in the TaggedField parsers and
+		// parse the length to find the end of the tagged field's data
+		let len = parse_int_be(&data[1..3], 32).expect("can't overflow");
+		let last_element = 3 + len;
 
-		if remaining_data.len() < len {
-			return Err(Error::UnexpectedEndOfTaggedFields);
+		if data.len() < last_element {
+			return Err(ParseError::UnexpectedEndOfTaggedFields);
 		}
-		let (field_data, remaining_data) = remaining_data.split_at(len);
 
-		data = remaining_data;
+		// Get the tagged field's data slice
+		let field = &data[0..last_element];
 
-		let field = parse_field(tag, field_data)?.map_or_else(|| {
-			RawTaggedField::UnknownTag(tag, Vec::from(field_data))
-		},|field| {
-			RawTaggedField::KnownTag(field)
-		});
+		// Set data slice to remaining data
+		data = &data[last_element..];
 
-		parts.push(field);
+		match TaggedField::from_base32(field) {
+			Ok(field) => {
+				parts.push(RawTaggedField::KnownSemantics(field))
+			},
+			Err(ParseError::Skip) => {
+				parts.push(RawTaggedField::UnknownSemantics(field.into()))
+			},
+			Err(e) => {return Err(e)}
+		}
 	}
 	Ok(parts)
 }
 
-type ParseFieldResult = Result<Option<TaggedField>, Error>;
+impl FromBase32 for TaggedField {
+	type Err = ParseError;
 
-fn parse_field(tag: u5, field_data: &[u5]) -> ParseFieldResult {
-	match tag.to_u8() {
-		constants::TAG_PAYMENT_HASH => parse_payment_hash(field_data),
-		constants::TAG_DESCRIPTION => parse_description(field_data),
-		constants::TAG_PAYEE_PUB_KEY => parse_payee_pub_key(field_data),
-		constants::TAG_DESCRIPTION_HASH => parse_description_hash(field_data),
-		constants::TAG_EXPIRY_TIME => parse_expiry_time(field_data),
-		constants::TAG_MIN_FINAL_CLTV_EXPIRY => parse_min_final_cltv_expiry(field_data),
-		constants::TAG_FALLBACK => parse_fallback(field_data),
-		constants::TAG_ROUTE => parse_route(field_data),
-		_ => {
-			// "A reader MUST skip over unknown fields"
-			Ok(None)
+	fn from_base32(field: &[u5]) -> Result<TaggedField, ParseError> {
+		if field.len() < 3 {
+			return Err(ParseError::UnexpectedEndOfTaggedFields);
+		}
+
+		let tag = field[0];
+		let field_data =  &field[3..];
+
+		match tag.to_u8() {
+			constants::TAG_PAYMENT_HASH =>
+				Ok(TaggedField::PaymentHash(Sha256::from_base32(field_data)?)),
+			constants::TAG_DESCRIPTION =>
+				Ok(TaggedField::Description(Description::from_base32(field_data)?)),
+			constants::TAG_PAYEE_PUB_KEY =>
+				Ok(TaggedField::PayeePubKey(PayeePubKey::from_base32(field_data)?)),
+			constants::TAG_DESCRIPTION_HASH =>
+				Ok(TaggedField::DescriptionHash(Sha256::from_base32(field_data)?)),
+			constants::TAG_EXPIRY_TIME =>
+				Ok(TaggedField::ExpiryTime(ExpiryTime::from_base32(field_data)?)),
+			constants::TAG_MIN_FINAL_CLTV_EXPIRY =>
+				Ok(TaggedField::MinFinalCltvExpiry(MinFinalCltvExpiry::from_base32(field_data)?)),
+			constants::TAG_FALLBACK =>
+				Ok(TaggedField::Fallback(Fallback::from_base32(field_data)?)),
+			constants::TAG_ROUTE =>
+				Ok(TaggedField::Route(Route::from_base32(field_data)?)),
+			_ => {
+				// "A reader MUST skip over unknown fields"
+				Err(ParseError::Skip)
+			}
 		}
 	}
 }
 
-fn parse_payment_hash(field_data: &[u5]) -> ParseFieldResult {
-	if field_data.len() != 52 {
-		// "A reader MUST skip over […] a p […] field that does not have data_length 52 […]."
-		Ok(None)
-	} else {
-		let mut hash: [u8; 32] = Default::default();
-		hash.copy_from_slice(&Vec::<u8>::from_base32(field_data)?);
-		Ok(Some(TaggedField::PaymentHash(hash)))
-	}
-}
+impl FromBase32 for Sha256 {
+	type Err = ParseError;
 
-fn parse_description(field_data: &[u5]) -> ParseFieldResult {
-	let bytes = Vec::<u8>::from_base32(field_data)?;
-	let description = String::from(str::from_utf8(&bytes)?);
-	Ok(Some(TaggedField::Description(description)))
-}
-
-fn parse_payee_pub_key(field_data: &[u5]) -> ParseFieldResult {
-	if field_data.len() != 53 {
-		// "A reader MUST skip over […] a n […] field that does not have data_length 53 […]."
-		Ok(None)
-	} else {
-		let data_bytes = Vec::<u8>::from_base32(field_data)?;
-		let pub_key = PublicKey::from_slice(&Secp256k1::without_caps(), &data_bytes)?;
-		Ok(Some(TaggedField::PayeePubKey(pub_key)))
-	}
-}
-
-fn parse_description_hash(field_data: &[u5]) -> ParseFieldResult {
-	if field_data.len() != 52 {
-		// "A reader MUST skip over […] a h […] field that does not have data_length 52 […]."
-		Ok(None)
-	} else {
-		let mut hash: [u8; 32] = Default::default();
-		hash.copy_from_slice(&Vec::<u8>::from_base32(field_data)?);
-		Ok(Some(TaggedField::DescriptionHash(hash)))
-	}
-}
-
-fn parse_expiry_time(field_data: &[u5]) -> ParseFieldResult {
-	let expiry = parse_int_be::<i64, u5>(field_data, 32);
-	if let Some(expiry) = expiry {
-		Ok(Some(TaggedField::ExpiryTime(Duration::seconds(expiry))))
-	} else {
-		Err(Error::IntegerOverflowError)
-	}
-}
-
-fn parse_min_final_cltv_expiry(field_data: &[u5]) -> ParseFieldResult {
-	let expiry = parse_int_be::<u64, u5>(field_data, 32);
-	if let Some(expiry) = expiry {
-		Ok(Some(TaggedField::MinFinalCltvExpiry(expiry)))
-	} else {
-		Err(Error::IntegerOverflowError)
-	}
-}
-
-fn parse_fallback(field_data: &[u5]) -> ParseFieldResult {
-	if field_data.len() < 1 {
-		return Err(Error::UnexpectedEndOfTaggedFields);
-	}
-
-	let version = field_data[0];
-	let bytes = Vec::<u8>::from_base32(&field_data[1..])?;
-
-	let fallback_address = match version.to_u8() {
-		0...16 => {
-			if bytes.len() < 2 || bytes.len() > 40 {
-				return Err(Error::InvalidSegWitProgramLength);
-			}
-
-			Some(Fallback::SegWitProgram {
-				version: version,
-				program: bytes
-			})
-		},
-		17 => {
-			if bytes.len() != 20 {
-				return Err(Error::InvalidPubKeyHashLength);
-			}
-			//TODO: refactor once const generics are available
-			let mut pkh = [0u8; 20];
-			pkh.copy_from_slice(&bytes);
-			Some(Fallback::PubKeyHash(pkh))
+	fn from_base32(field_data: &[u5]) -> Result<Sha256, ParseError> {
+		if field_data.len() != 52 {
+			// "A reader MUST skip over […] a p, [or] h […] field that does not have data_length 52 […]."
+			Err(ParseError::Skip)
+		} else {
+			let mut hash: [u8; 32] = Default::default();
+			hash.copy_from_slice(&Vec::<u8>::from_base32(field_data)?);
+			Ok(Sha256(hash))
 		}
-		18 => {
-			if bytes.len() != 20 {
-				return Err(Error::InvalidScriptHashLength);
-			}
-			let mut sh = [0u8; 20];
-			sh.copy_from_slice(&bytes);
-			Some(Fallback::ScriptHash(sh))
-		}
-		_ => None
-	};
-
-	Ok(fallback_address.map(|addr| TaggedField::Fallback(addr)))
+	}
 }
 
-fn parse_route(field_data: &[u5]) -> ParseFieldResult {
-	let bytes = Vec::<u8>::from_base32(field_data)?;
+impl FromBase32 for Description {
+	type Err = ParseError;
 
-	if bytes.len() % 51 != 0 {
-		return Err(Error::UnexpectedEndOfTaggedFields);
+	fn from_base32(field_data: &[u5]) -> Result<Description, ParseError> {
+		let bytes = Vec::<u8>::from_base32(field_data)?;
+		let description = String::from(str::from_utf8(&bytes)?);
+		Ok(Description::new(description).expect(
+			"Max len is 639=floor(1023*5/8) since the len field is only 10bits long"
+		))
 	}
+}
 
-	let mut route_hops = Vec::<RouteHop>::new();
+impl FromBase32 for PayeePubKey {
+	type Err = ParseError;
 
-	let mut bytes = bytes.as_slice();
-	while !bytes.is_empty() {
-		let hop_bytes = &bytes[0..51];
-		bytes = &bytes[51..];
-
-		let mut channel_id: [u8; 8] = Default::default();
-		channel_id.copy_from_slice(&hop_bytes[33..41]);
-
-		let hop = RouteHop {
-			pubkey: PublicKey::from_slice(&Secp256k1::without_caps(), &hop_bytes[0..33])?,
-			short_channel_id: channel_id,
-			fee_base_msat: parse_int_be(&hop_bytes[41..45], 256).expect("slice too big?"),
-			fee_proportional_millionths: parse_int_be(&hop_bytes[45..49], 256).expect("slice too big?"),
-			cltv_expiry_delta: parse_int_be(&hop_bytes[49..51], 256).expect("slice too big?")
-		};
-
-		route_hops.push(hop);
+	fn from_base32(field_data: &[u5]) -> Result<PayeePubKey, ParseError> {
+		if field_data.len() != 53 {
+			// "A reader MUST skip over […] a n […] field that does not have data_length 53 […]."
+			Err(ParseError::Skip)
+		} else {
+			let data_bytes = Vec::<u8>::from_base32(field_data)?;
+			let pub_key = PublicKey::from_slice(&Secp256k1::without_caps(), &data_bytes)?;
+			Ok(pub_key.into())
+		}
 	}
+}
 
-	Ok(Some(TaggedField::Route(route_hops)))
+impl FromBase32 for ExpiryTime {
+	type Err = ParseError;
+
+	fn from_base32(field_data: &[u5]) -> Result<ExpiryTime, ParseError> {
+		let expiry = parse_int_be::<u64, u5>(field_data, 32);
+		if let Some(expiry) = expiry {
+			Ok(ExpiryTime{seconds: expiry})
+		} else {
+			Err(ParseError::IntegerOverflowError)
+		}
+	}
+}
+
+impl FromBase32 for MinFinalCltvExpiry {
+	type Err = ParseError;
+
+	fn from_base32(field_data: &[u5]) -> Result<MinFinalCltvExpiry, ParseError> {
+		let expiry = parse_int_be::<u64, u5>(field_data, 32);
+		if let Some(expiry) = expiry {
+			Ok(MinFinalCltvExpiry(expiry))
+		} else {
+			Err(ParseError::IntegerOverflowError)
+		}
+	}
+}
+
+impl FromBase32 for Fallback {
+	type Err = ParseError;
+
+	fn from_base32(field_data: &[u5]) -> Result<Fallback, ParseError> {
+		if field_data.len() < 1 {
+			return Err(ParseError::UnexpectedEndOfTaggedFields);
+		}
+
+		let version = field_data[0];
+		let bytes = Vec::<u8>::from_base32(&field_data[1..])?;
+
+		match version.to_u8() {
+			0...16 => {
+				if bytes.len() < 2 || bytes.len() > 40 {
+					return Err(ParseError::InvalidSegWitProgramLength);
+				}
+
+				Ok(Fallback::SegWitProgram {
+					version: version,
+					program: bytes
+				})
+			},
+			17 => {
+				if bytes.len() != 20 {
+					return Err(ParseError::InvalidPubKeyHashLength);
+				}
+				//TODO: refactor once const generics are available
+				let mut pkh = [0u8; 20];
+				pkh.copy_from_slice(&bytes);
+				Ok(Fallback::PubKeyHash(pkh))
+			}
+			18 => {
+				if bytes.len() != 20 {
+					return Err(ParseError::InvalidScriptHashLength);
+				}
+				let mut sh = [0u8; 20];
+				sh.copy_from_slice(&bytes);
+				Ok(Fallback::ScriptHash(sh))
+			}
+			_ => Err(ParseError::Skip)
+		}
+	}
+}
+
+impl FromBase32 for Route {
+	type Err = ParseError;
+
+	fn from_base32(field_data: &[u5]) -> Result<Route, ParseError> {
+		let bytes = Vec::<u8>::from_base32(field_data)?;
+
+		if bytes.len() % 51 != 0 {
+			return Err(ParseError::UnexpectedEndOfTaggedFields);
+		}
+
+		let mut route_hops = Vec::<RouteHop>::new();
+
+		let mut bytes = bytes.as_slice();
+		while !bytes.is_empty() {
+			let hop_bytes = &bytes[0..51];
+			bytes = &bytes[51..];
+
+			let mut channel_id: [u8; 8] = Default::default();
+			channel_id.copy_from_slice(&hop_bytes[33..41]);
+
+			let hop = RouteHop {
+				pubkey: PublicKey::from_slice(&Secp256k1::without_caps(), &hop_bytes[0..33])?,
+				short_channel_id: channel_id,
+				fee_base_msat: parse_int_be(&hop_bytes[41..45], 256).expect("slice too big?"),
+				fee_proportional_millionths: parse_int_be(&hop_bytes[45..49], 256).expect("slice too big?"),
+				cltv_expiry_delta: parse_int_be(&hop_bytes[49..51], 256).expect("slice too big?")
+			};
+
+			route_hops.push(hop);
+		}
+
+		Ok(Route(route_hops))
+	}
 }
 
 #[derive(PartialEq, Debug)]
-pub enum Error {
+pub enum ParseError {
 	Bech32Error(bech32::Error),
 	ParseAmountError(ParseIntError),
 	MalformedSignature(secp256k1::Error),
@@ -340,11 +377,12 @@ pub enum Error {
 	InvalidPubKeyHashLength,
 	InvalidScriptHashLength,
 	InvalidRecoveryId,
+	Skip
 }
 
-impl Display for Error {
+impl Display for ParseError {
 	fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-		use self::Error::*;
+		use self::ParseError::*;
 		use std::error::Error;
 		match *self {
 			// TODO: find a way to combine the first three arms (e as error::Error?)
@@ -370,9 +408,9 @@ impl Display for Error {
 	}
 }
 
-impl error::Error for Error {
+impl error::Error for ParseError {
 	fn description(&self) -> &str {
-		use self::Error::*;
+		use self::ParseError::*;
 		match *self {
 			Bech32Error(_) => "invalid bech32",
 			ParseAmountError(_) => "invalid amount in hrp",
@@ -390,13 +428,14 @@ impl error::Error for Error {
 			InvalidPubKeyHashLength => "fallback public key hash has a length unequal 20 bytes",
 			InvalidScriptHashLength => "fallback script hash has a length unequal 32 bytes",
 			InvalidRecoveryId => "recovery id is out of range (should be in [0,3])",
+			Skip => "the tagged field has to be skipped because of an unexpected, but allowed property",
 		}
 	}
 }
 
 macro_rules! from_error {
     ($my_error:expr, $extern_error:ty) => {
-        impl From<$extern_error> for Error {
+        impl From<$extern_error> for ParseError {
             fn from(e: $extern_error) -> Self {
                 $my_error(e)
             }
@@ -404,23 +443,22 @@ macro_rules! from_error {
     }
 }
 
-from_error!(Error::MalformedSignature, secp256k1::Error);
-from_error!(Error::ParseAmountError, ParseIntError);
-from_error!(Error::DescriptionDecodeError, str::Utf8Error);
+from_error!(ParseError::MalformedSignature, secp256k1::Error);
+from_error!(ParseError::ParseAmountError, ParseIntError);
+from_error!(ParseError::DescriptionDecodeError, str::Utf8Error);
 
-impl From<bech32::Error> for Error {
+impl From<bech32::Error> for ParseError {
 	fn from(e: bech32::Error) -> Self {
 		match e {
-			bech32::Error::InvalidPadding => Error::PaddingError(e),
-			_ => Error::Bech32Error(e)
+			bech32::Error::InvalidPadding => ParseError::PaddingError(e),
+			_ => ParseError::Bech32Error(e)
 		}
 	}
 }
 
 #[cfg(test)]
 mod test {
-	use TaggedField;
-	use de::Error;
+	use de::ParseError;
 	use secp256k1::{PublicKey, Secp256k1};
 	use bech32::u5;
 
@@ -448,7 +486,7 @@ mod test {
 
 		assert_eq!("bc".parse::<Currency>(), Ok(Currency::Bitcoin));
 		assert_eq!("tb".parse::<Currency>(), Ok(Currency::BitcoinTestnet));
-		assert_eq!("something_else".parse::<Currency>(), Err(Error::UnknownCurrency))
+		assert_eq!("something_else".parse::<Currency>(), Err(ParseError::UnknownCurrency))
 	}
 
 	#[test]
@@ -463,8 +501,9 @@ mod test {
 	//TODO: test error conditions
 
 	#[test]
-	fn test_parse_payment_hash() {
-		use de::parse_payment_hash;
+	fn test_parse_sha256_hash() {
+		use Sha256;
+		use bech32::FromBase32;
 
 		let input = from_bech32(
 			"qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypq".as_bytes()
@@ -475,23 +514,25 @@ mod test {
 			0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
 			0x08, 0x09, 0x01, 0x02
 		];
-		let expected = Ok(Some(TaggedField::PaymentHash(hash)));
+		let expected = Ok(Sha256(hash));
 
-		assert_eq!(parse_payment_hash(&input), expected);
+		assert_eq!(Sha256::from_base32(&input), expected);
 	}
 
 	#[test]
 	fn test_parse_description() {
-		use de::parse_description;
+		use ::Description;
+		use bech32::FromBase32;
 
 		let input = from_bech32("xysxxatsyp3k7enxv4js".as_bytes());
-		let expected = Ok(Some(TaggedField::Description("1 cup coffee".into())));
-		assert_eq!(parse_description(&input), expected);
+		let expected = Ok(Description::new("1 cup coffee".to_owned()).unwrap());
+		assert_eq!(Description::from_base32(&input), expected);
 	}
 
 	#[test]
 	fn test_parse_payee_pub_key() {
-		use de::parse_payee_pub_key;
+		use ::PayeePubKey;
+		use bech32::FromBase32;
 
 		let input = from_bech32("q0n326hr8v9zprg8gsvezcch06gfaqqhde2aj730yg0durunfhv66".as_bytes());
 		let pk_bytes = [
@@ -499,57 +540,39 @@ mod test {
 			0x17, 0x7e, 0x90, 0x9e, 0x80, 0x17, 0x6e, 0x55, 0xd9, 0x7a, 0x2f, 0x22, 0x1e, 0xde,
 			0x0f, 0x93, 0x4d, 0xd9, 0xad
 		];
-		let expected = Ok(Some(TaggedField::PayeePubKey(
+		let expected = Ok(PayeePubKey(
 			PublicKey::from_slice(&Secp256k1::without_caps(), &pk_bytes[..]).unwrap()
-		)));
+		));
 
-		assert_eq!(parse_payee_pub_key(&input), expected);
-	}
-
-	#[test]
-	fn test_parse_description_hash() {
-		use de::parse_description_hash;
-
-		let input = from_bech32(
-			"8yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqs".as_bytes()
-		);
-		let expected = Ok(Some(TaggedField::DescriptionHash([
-				0x39, 0x25, 0xb6, 0xf6, 0x7e, 0x2c, 0x34, 0x00, 0x36, 0xed, 0x12, 0x09, 0x3d, 0xd4,
-				0x4e, 0x03, 0x68, 0xdf, 0x1b, 0x6e, 0xa2, 0x6c, 0x53, 0xdb, 0xe4, 0x81, 0x1f, 0x58,
-				0xfd, 0x5d, 0xb8, 0xc1
-		])));
-
-		assert_eq!(parse_description_hash(&input), expected);
+		assert_eq!(PayeePubKey::from_base32(&input), expected);
 	}
 
 	#[test]
 	fn test_parse_expiry_time() {
-		use de::parse_expiry_time;
-		use chrono::Duration;
+		use ::ExpiryTime;
+		use bech32::FromBase32;
 
 		let input = from_bech32("pu".as_bytes());
-		let expected = Ok(Some(TaggedField::ExpiryTime(
-			Duration::seconds(60)
-		)));
+		let expected = Ok(ExpiryTime{seconds: 60});
 
-		assert_eq!(parse_expiry_time(&input), expected);
-
+		assert_eq!(ExpiryTime::from_base32(&input), expected);
 	}
 
 	#[test]
 	fn test_parse_min_final_cltv_expiry() {
-		use de::parse_min_final_cltv_expiry;
+		use ::MinFinalCltvExpiry;
+		use bech32::FromBase32;
 
 		let input = from_bech32("pr".as_bytes());
-		let expected = Ok(Some(TaggedField::MinFinalCltvExpiry(35)));
+		let expected = Ok(MinFinalCltvExpiry(35));
 
-		assert_eq!(parse_min_final_cltv_expiry(&input), expected);
+		assert_eq!(MinFinalCltvExpiry::from_base32(&input), expected);
 	}
 
 	#[test]
 	fn test_parse_fallback() {
-		use de::parse_fallback;
 		use Fallback;
+		use bech32::FromBase32;
 
 		let cases = vec![
 			(
@@ -579,14 +602,15 @@ mod test {
 		];
 
 		for (input, expected) in cases.into_iter() {
-			assert_eq!(parse_fallback(&input), Ok(Some(TaggedField::Fallback(expected))));
+			assert_eq!(Fallback::from_base32(&input), Ok(expected));
 		}
 	}
 
 	#[test]
 	fn test_parse_route() {
 		use RouteHop;
-		use de::parse_route;
+		use ::Route;
+		use bech32::FromBase32;
 
 		let input = from_bech32(
 			"q20q82gphp2nflc7jtzrcazrra7wwgzxqc8u7754cdlpfrmccae92qgzqvzq2ps8pqqqqqqpqqqqq9qqqvpeuqa\
@@ -623,14 +647,14 @@ mod test {
 			cltv_expiry_delta: 4
 		});
 
-		assert_eq!(parse_route(&input), Ok(Some(TaggedField::Route(expected))));
+		assert_eq!(Route::from_base32(&input), Ok(Route(expected)));
 	}
 
 	#[test]
 	fn test_raw_invoice_deserialization() {
 		use TaggedField::*;
 		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
-		use {RawInvoice, RawHrp, RawDataPart, Currency};
+		use {RawInvoice, RawHrp, RawDataPart, Currency, Sha256};
 
 		assert_eq!(
 			"lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmw\
@@ -646,12 +670,12 @@ mod test {
 					data: RawDataPart {
 						timestamp: 1496314658,
 						tagged_fields: vec![
-							PaymentHash([
+							PaymentHash(Sha256([
 								0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
 								0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
 								0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
-							]).into(),
-							Description("Please consider supporting this project".into()).into(),
+							])).into(),
+							Description(::Description::new("Please consider supporting this project".to_owned()).unwrap()).into(),
 						],
 						signature: RecoverableSignature::from_compact(
 							&Secp256k1::without_caps(),

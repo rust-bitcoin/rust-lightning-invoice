@@ -1,15 +1,13 @@
 extern crate bech32;
-extern crate chrono;
 extern crate num_traits;
 extern crate regex;
 extern crate secp256k1;
 
 use bech32::u5;
 
-use chrono::Duration;
-
 use secp256k1::key::PublicKey;
 use secp256k1::RecoverableSignature;
+use std::ops::Deref;
 
 mod de;
 mod ser;
@@ -76,22 +74,68 @@ pub enum Currency {
 #[derive(Eq, PartialEq, Debug)]
 pub enum RawTaggedField {
 	/// Parsed tagged field with known tag
-	KnownTag(TaggedField),
-	/// tagged field with unknown tag, not parsed
-	UnknownTag(u5, Vec<u5>),
+	KnownSemantics(TaggedField),
+	/// tagged field which was not parsed due to an unknown tag or undefined field semantics
+	UnknownSemantics(Vec<u5>),
 }
 
+/// Tagged field with known tag
 #[derive(Eq, PartialEq, Debug)]
 pub enum TaggedField {
-	PaymentHash([u8; 32]),
-	Description(String),
-	PayeePubKey(PublicKey),
-	DescriptionHash([u8; 32]),
-	ExpiryTime(Duration),
-	MinFinalCltvExpiry(u64),
+	PaymentHash(Sha256),
+	Description(Description),
+	PayeePubKey(PayeePubKey),
+	DescriptionHash(Sha256),
+	ExpiryTime(ExpiryTime),
+	MinFinalCltvExpiry(MinFinalCltvExpiry),
 	Fallback(Fallback),
-	Route(Vec<RouteHop>),
+	Route(Route),
 }
+
+/// SHA-256 hash
+#[derive(Eq, PartialEq, Debug)]
+pub struct Sha256(pub [u8; 32]);
+
+/// Description string
+///
+/// # Invariants
+/// The description can be at most 639 __bytes__ long
+#[derive(Eq, PartialEq, Debug)]
+pub struct Description(String);
+
+/// Payee public key
+#[derive(Eq, PartialEq, Debug)]
+pub struct PayeePubKey(pub PublicKey);
+
+/// Positive duration that defines when (relatively to the timestamp) in the future the invoice expires
+#[derive(Eq, PartialEq, Debug)]
+pub struct ExpiryTime {
+	pub seconds: u64
+}
+
+/// `min_final_cltv_expiry` to use for the last HTLC in the route
+#[derive(Eq, PartialEq, Debug)]
+pub struct MinFinalCltvExpiry(pub u64);
+
+// TODO: better types instead onf byte arrays
+/// Fallback address in case no LN payment is possible
+#[derive(Eq, PartialEq, Debug)]
+pub enum Fallback {
+	SegWitProgram {
+		version: u5,
+		program: Vec<u8>,
+	},
+	PubKeyHash([u8; 20]),
+	ScriptHash([u8; 20]),
+}
+
+/// Private routing information
+///
+/// # Invariants
+/// The encoded route has to be <1024 5bit characters long (<=639 bytes or <=12 hops)
+///
+#[derive(Eq, PartialEq, Debug)]
+pub struct Route(Vec<RouteHop>);
 
 #[derive(Eq, PartialEq, Debug)]
 pub struct RouteHop {
@@ -113,19 +157,110 @@ pub mod constants {
 	pub const TAG_ROUTE: u8 = 3;
 }
 
-// TODO: better types instead onf byte arrays
-#[derive(Eq, PartialEq, Debug)]
-pub enum Fallback {
-	SegWitProgram {
-		version: u5,
-		program: Vec<u8>,
-	},
-	PubKeyHash([u8; 20]),
-	ScriptHash([u8; 20]),
-}
-
 impl From<TaggedField> for RawTaggedField {
 	fn from(tf: TaggedField) -> Self {
-		RawTaggedField::KnownTag(tf)
+		RawTaggedField::KnownSemantics(tf)
 	}
+}
+
+impl TaggedField {
+	pub fn tag(&self) -> u5 {
+		let tag = match *self {
+			TaggedField::PaymentHash(_) => constants::TAG_PAYMENT_HASH,
+			TaggedField::Description(_) => constants::TAG_DESCRIPTION,
+			TaggedField::PayeePubKey(_) => constants::TAG_PAYEE_PUB_KEY,
+			TaggedField::DescriptionHash(_) => constants::TAG_DESCRIPTION_HASH,
+			TaggedField::ExpiryTime(_) => constants::TAG_EXPIRY_TIME,
+			TaggedField::MinFinalCltvExpiry(_) => constants::TAG_MIN_FINAL_CLTV_EXPIRY,
+			TaggedField::Fallback(_) => constants::TAG_FALLBACK,
+			TaggedField::Route(_) => constants::TAG_ROUTE,
+		};
+
+		u5::try_from_u8(tag).expect("all tags defined are <32")
+	}
+}
+
+impl Description {
+
+	/// Creates a new `Description` if `description` is at most 1023 __bytes__ long,
+	/// returns `CreationError::DescriptionTooLong` otherwise
+	///
+	/// Please note that single characters may use more than one byte due to UTF8 encoding.
+	pub fn new(description: String) -> Result<Description, CreationError> {
+		if description.len() > 639 {
+			Err(CreationError::DescriptionTooLong)
+		} else {
+			Ok(Description(description))
+		}
+	}
+
+	pub fn into_inner(self) -> String {
+		self.0
+	}
+}
+
+impl Into<String> for Description {
+	fn into(self) -> String {
+		self.into_inner()
+	}
+}
+
+impl Deref for Description {
+	type Target = str;
+
+	fn deref(&self) -> &str {
+		&self.0
+	}
+}
+
+impl From<PublicKey> for PayeePubKey {
+	fn from(pk: PublicKey) -> Self {
+		PayeePubKey(pk)
+	}
+}
+
+impl Deref for PayeePubKey {
+	type Target = PublicKey;
+
+	fn deref(&self) -> &PublicKey {
+		&self.0
+	}
+}
+
+impl Route {
+	pub fn new(hops: Vec<RouteHop>) -> Result<Route, CreationError> {
+		if hops.len() <= 12 {
+			Ok(Route(hops))
+		} else {
+			Err(CreationError::RouteTooLong)
+		}
+	}
+
+	fn into_inner(self) -> Vec<RouteHop> {
+		self.0
+	}
+}
+
+impl Into<Vec<RouteHop>> for Route {
+	fn into(self) -> Vec<RouteHop> {
+		self.into_inner()
+	}
+}
+
+impl Deref for Route {
+	type Target = Vec<RouteHop>;
+
+	fn deref(&self) -> &Vec<RouteHop> {
+		&self.0
+	}
+}
+
+/// Errors that may occur when constructing a new `RawInvoice` or `Invoice`
+#[derive(Eq, PartialEq, Debug)]
+pub enum CreationError {
+	/// The supplied description string was longer than 639 __bytes__ (see [`Description::new(…)`](./struct.Description.html#method.new))
+	DescriptionTooLong,
+
+	/// The specified route has too many hops and can't be encoded
+	RouteTooLong,
 }

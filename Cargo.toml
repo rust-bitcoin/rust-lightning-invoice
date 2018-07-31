@@ -7,7 +7,6 @@ license = "Apache-2.0"
 [dependencies]
 bech32 = "0.4.0"
 regex = "0.2"
-chrono = "0.4"
 secp256k1 = "0.9"
 bitcoin = "0.13"
 num-traits = "0.2"
