@@ -6,10 +6,11 @@ use secp256k1::Secp256k1;
 
 use ::*;
 
-impl Display for RawInvoice {
+impl Display for SignedRawInvoice {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-		let hrp = self.hrp.to_string();
-		let data  = self.data.to_base32();
+		let hrp = self.raw_invoice.hrp.to_string();
+		let mut data  = self.raw_invoice.data.to_base32();
+		data.extend_from_slice(&self.signature.to_base32());
 
 		Bech32::new(hrp, data).expect("hrp len > 0").fmt(f)
 	}
@@ -118,14 +119,6 @@ impl ToBase32<Vec<u5>> for RawDataPart {
 		for tagged_field in self.tagged_fields.iter() {
 			encoded.extend_from_slice(&tagged_field.to_base32());
 		}
-
-		// TODO: refactor to avoid copying (maybe using Base32Writer?)
-		// encode signature
-		let (recovery_id, signature) = self.signature.serialize_compact(&Secp256k1::without_caps());
-		let mut signature_bytes = Vec::<u8>::with_capacity(65);
-		signature_bytes.extend_from_slice(&signature[..]);
-		signature_bytes.push(recovery_id.to_i32() as u8); // can only be in range 0..4
-		encoded.extend(signature_bytes.to_base32());
 
 		encoded
 	}
@@ -278,6 +271,17 @@ impl ToBase32<Vec<u5>> for TaggedField {
 		sized_data.extend_from_slice(&data);
 
 		sized_data
+	}
+}
+
+impl ToBase32<Vec<u5>> for Signature {
+	fn to_base32(&self) -> Vec<u5> {
+		let (recovery_id, signature) = self.serialize_compact(&Secp256k1::without_caps());
+		let mut signature_bytes = Vec::<u8>::with_capacity(65);
+		signature_bytes.extend_from_slice(&signature[..]);
+		signature_bytes.push(recovery_id.to_i32() as u8); // can only be in range 0..4
+
+		signature_bytes.to_base32()
 	}
 }
 

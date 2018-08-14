@@ -20,30 +20,45 @@ mod de;
 mod ser;
 mod util;
 
+/// Represents a semantically correct lightning BOLT11 invoice
 pub struct Invoice {
-	raw_invoice: RawInvoice,
+	raw_invoice: SignedRawInvoice,
 
 }
 
+/// Represents a signed `RawInvoice` with cached hash.
+///
+/// # Invariants
+/// * The hash has to be either from the deserialized invoice or from the serialized `raw_invoice`
+#[derive(Eq, PartialEq, Debug)]
+pub struct SignedRawInvoice {
+	/// The rawInvoice that the signature belongs to
+	raw_invoice: RawInvoice,
+
+	/// Hash of the `RawInvoice` that will be used to check the signature.
+	///
+	/// * if the `SignedRawInvoice` was deserialized the hash is of from the original encoded form,
+	/// since it's not guaranteed that encoding it again will lead to the same result since integers
+	/// could have been encoded with leading zeroes etc.
+	/// * if the `SignedRawInvoice` was constructed manually the hash will be the calculated hash
+	/// from the `RawInvoice`
+	hash: [u8; 32],
+
+	/// signature of the payment request
+	signature: Signature,
+}
+
 /// Represents an syntactically correct Invoice for a payment on the lightning network as defined in
-/// [BOLT #11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md).
+/// [BOLT #11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md),
+/// but without the signature information.
 /// De- and encoding should not lead to information loss.
 #[derive(Eq, PartialEq, Debug)]
 pub struct RawInvoice {
 	/// human readable part
-	hrp: RawHrp,
+	pub hrp: RawHrp,
 
 	/// data part
-	data: RawDataPart,
-
-	/// Hash of the HRP and data part minus the signature that will be used to check the signature.
-	///
-	/// * if the `RawInvoice` was deserialized this field is filled from the beginning since it's
-	/// not guaranteed that encoding it again will lead to the same result since integers could have
-	/// been encoded with leading zeroes.
-	/// * if the `RawInvoice` was constructed manually the hash will be None
-	///
-	hash: Option<[u8; 32]>,
+	pub data: RawDataPart,
 }
 
 /// Data of the `RawInvoice` that is encoded in the human readable part
@@ -68,9 +83,6 @@ pub struct RawDataPart {
 
 	/// tagged fields of the payment request
 	pub tagged_fields: Vec<RawTaggedField>,
-
-	/// signature of the payment request
-	pub signature: RecoverableSignature,
 }
 
 /// SI prefixes for the human readable part
@@ -151,6 +163,10 @@ pub enum Fallback {
 	ScriptHash([u8; 20]),
 }
 
+/// Recoverable signature
+#[derive(Eq, PartialEq, Debug)]
+pub struct Signature(pub RecoverableSignature);
+
 /// Private routing information
 ///
 /// # Invariants
@@ -192,6 +208,28 @@ pub mod constants {
 	}
 }
 
+impl SignedRawInvoice {
+	/// Disassembles the `SignedRawInvoice` into it's three parts:
+	///  1. raw invoice
+	///  2. hash of the raw invoice
+	///  3. signature
+	pub fn into_parts(self) -> (RawInvoice, [u8; 32], Signature) {
+		(self.raw_invoice, self.hash, self.signature)
+	}
+
+	pub fn raw_invoice(&self) -> &RawInvoice {
+		&self.raw_invoice
+	}
+
+	pub fn hash(&self) -> &[u8; 32] {
+		&self.hash
+	}
+
+	pub fn signature(&self) -> &Signature {
+		&self.signature
+	}
+}
+
 impl RawInvoice {
 	pub fn hrp(&self) -> &RawHrp {
 		&self.hrp
@@ -229,15 +267,10 @@ impl RawInvoice {
 	pub fn hash(&self) -> [u8; 32] {
 		use bech32::ToBase32;
 
-		if let Some(hash) = self.hash {
-			hash
-		} else {
-			let b32_data = self.data.to_base32();
-			RawInvoice::hash_from_parts(
-				self.hrp.to_string().as_bytes(),
-				&b32_data[..b32_data.len()-104]
-			)
-		}
+		RawInvoice::hash_from_parts(
+			self.hrp.to_string().as_bytes(),
+			&self.data.to_base32()
+		)
 	}
 }
 
@@ -273,7 +306,7 @@ impl Invoice {
 	}
 
 	pub fn get_tagged_fields(&self) -> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>> {
-		self.raw_invoice.data.tagged_fields.iter().filter_map(|raw| match raw {
+		self.raw_invoice.raw_invoice.data.tagged_fields.iter().filter_map(|raw| match raw {
 			RawTaggedField::KnownSemantics(tf) => Some(tf),
 			_ => None,
 		})
@@ -385,6 +418,14 @@ impl Deref for Route {
 	}
 }
 
+impl Deref for Signature {
+	type Target = RecoverableSignature;
+
+	fn deref(&self) -> &RecoverableSignature {
+		&self.0
+	}
+}
+
 /// Errors that may occur when constructing a new `RawInvoice` or `Invoice`
 #[derive(Eq, PartialEq, Debug)]
 pub enum CreationError {
@@ -431,20 +472,7 @@ mod test {
 					])).into(),
 					Description(::Description::new("Please consider supporting this project".to_owned()).unwrap()).into(),
 				],
-				signature: RecoverableSignature::from_compact(
-					&Secp256k1::without_caps(),
-					&[
-						0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
-						0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
-						0x4e, 0x18, 0x45, 0xc8, 0xaf, 0x72, 0x05, 0xaf, 0xcf, 0xcc, 0x7f,
-						0x42, 0x5f, 0xcd, 0x14, 0x63, 0xe9, 0x3c, 0x32, 0x88, 0x1e, 0xad,
-						0x0d, 0x6e, 0x35, 0x6d, 0x46, 0x7e, 0xc8, 0xc0, 0x25, 0x53, 0xf9,
-						0xaa, 0xb1, 0x5e, 0x57, 0x38, 0xb1, 0x1f, 0x12, 0x7f
-					],
-					RecoveryId::from_i32(0).unwrap()
-				).unwrap(),
 			},
-			hash: None,
 		};
 
 		let expected_hash = [
@@ -452,46 +480,6 @@ mod test {
 			0x85, 0x8d, 0xb1, 0xd1, 0xf7, 0xab, 0x71, 0x37, 0xdc, 0xb7, 0x83, 0x5d, 0xb2, 0xec,
 			0xd5, 0x18, 0xe1, 0xc9
 		];
-
-		assert_eq!(invoice.hash(), expected_hash)
-	}
-
-	#[test]
-	fn test_stored_invoice_hash() {
-		use ::{RawInvoice, RawHrp, RawDataPart, Currency};
-		use secp256k1::*;
-		use ::TaggedField::*;
-
-		let expected_hash = [
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00
-		];
-
-		let invoice = RawInvoice {
-			hrp: RawHrp {
-				currency: Currency::Bitcoin,
-				raw_amount: None,
-				si_prefix: None,
-			},
-			data: RawDataPart {
-				timestamp: 1496314658,
-				tagged_fields: vec![],
-				signature: RecoverableSignature::from_compact(
-					&Secp256k1::without_caps(),
-					&[
-						0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
-						0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
-						0x4e, 0x18, 0x45, 0xc8, 0xaf, 0x72, 0x05, 0xaf, 0xcf, 0xcc, 0x7f,
-						0x42, 0x5f, 0xcd, 0x14, 0x63, 0xe9, 0x3c, 0x32, 0x88, 0x1e, 0xad,
-						0x0d, 0x6e, 0x35, 0x6d, 0x46, 0x7e, 0xc8, 0xc0, 0x25, 0x53, 0xf9,
-						0xaa, 0xb1, 0x5e, 0x57, 0x38, 0xb1, 0x1f, 0x12, 0x7f
-					],
-					RecoveryId::from_i32(0).unwrap()
-				).unwrap(),
-			},
-			hash: Some(expected_hash),
-		};
 
 		assert_eq!(invoice.hash(), expected_hash)
 	}

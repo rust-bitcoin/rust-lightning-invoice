@@ -44,22 +44,29 @@ impl FromStr for SiPrefix {
 	}
 }
 
-impl FromStr for RawInvoice {
+impl FromStr for SignedRawInvoice {
 	type Err = ParseError;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		let (hrp, data) = Bech32::from_str_lenient(s)?.into_parts();
 
-		let raw_hrp: RawHrp = hrp.parse()?;
-		let data_part = RawDataPart::from_base32(&data)?;
+		if data.len() < 104 {
+			return Err(ParseError::TooShortDataPart);
+		}
 
-		Ok(RawInvoice {
-			hrp: raw_hrp,
-			data: data_part,
-			hash: Some(RawInvoice::hash_from_parts(
+		let raw_hrp: RawHrp = hrp.parse()?;
+		let data_part = RawDataPart::from_base32(&data[..data.len()-104])?;
+
+		Ok(SignedRawInvoice {
+			raw_invoice: RawInvoice {
+				hrp: raw_hrp,
+				data: data_part,
+			},
+			hash: RawInvoice::hash_from_parts(
 				hrp.as_bytes(),
 				&data[..data.len()-104]
-			)),
+			),
+			signature: Signature::from_base32(&data[data.len()-104..])?,
 		})
 	}
 }
@@ -101,34 +108,36 @@ impl FromBase32 for RawDataPart {
 	type Err = ParseError;
 
 	fn from_base32(data: &[u5]) -> Result<Self, Self::Err> {
-		if data.len() < 104 + 7 { // signature + timestamp
+		if data.len() < 7 { // timestamp length
 			return Err(ParseError::TooShortDataPart);
 		}
 
-		let time = &data[0..7];
-		let tagged= &data[7..(data.len()-104)];
-		let recoverable_signature = &data[(data.len()-104)..];
-		assert_eq!(time.len(), 7);
-		assert_eq!(recoverable_signature.len(), 104);
-
-		let recoverable_signature_bytes = Vec::<u8>::from_base32(recoverable_signature)?;
-		let signature = &recoverable_signature_bytes[0..64];
-		let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
-
-
-		let timestamp: u64 = parse_int_be(time, 32).expect("7*5bit < 64bit, no overflow possible");
-		let signature = RecoverableSignature::from_compact(
-			&Secp256k1::without_caps(),
-			signature,
-			recovery_id
-		)?;
-		let tagged = parse_tagged_parts(tagged)?;
+		let timestamp: u64 = parse_int_be(&data[0..7], 32)
+			.expect("7*5bit < 64bit, no overflow possible");
+		let tagged = parse_tagged_parts(&data[7..])?;
 
 		Ok(RawDataPart {
 			timestamp: timestamp,
 			tagged_fields: tagged,
-			signature: signature,
 		})
+	}
+}
+
+impl FromBase32 for Signature {
+	type Err = ParseError;
+	fn from_base32(signature: &[u5]) -> Result<Self, Self::Err> {
+		if signature.len() != 104 {
+			return Err(ParseError::InvalidSliceLength("Signature::from_base32()".into()));
+		}
+		let recoverable_signature_bytes = Vec::<u8>::from_base32(signature)?;
+		let signature = &recoverable_signature_bytes[0..64];
+		let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
+
+		Ok(Signature(RecoverableSignature::from_compact(
+			&Secp256k1::without_caps(),
+			signature,
+			recovery_id
+		)?))
 	}
 }
 
@@ -381,6 +390,7 @@ pub enum ParseError {
 	InvalidPubKeyHashLength,
 	InvalidScriptHashLength,
 	InvalidRecoveryId,
+	InvalidSliceLength(String),
 	Skip
 }
 
@@ -405,6 +415,9 @@ impl Display for ParseError {
 			PaddingError(ref e) => {
 				write!(f, "{} ({})", self.description(), e)
 			},
+			InvalidSliceLength(ref function) => {
+				write!(f, "{} (in function {})", self.description(), function)
+			}
 			_ => {
 				write!(f, "{}", self.description())
 			}
@@ -432,6 +445,7 @@ impl error::Error for ParseError {
 			InvalidPubKeyHashLength => "fallback public key hash has a length unequal 20 bytes",
 			InvalidScriptHashLength => "fallback script hash has a length unequal 32 bytes",
 			InvalidRecoveryId => "recovery id is out of range (should be in [0,3])",
+			InvalidSliceLength(_) => "some slice had the wrong length",
 			Skip => "the tagged field has to be skipped because of an unexpected, but allowed property",
 		}
 	}
@@ -465,6 +479,7 @@ mod test {
 	use de::ParseError;
 	use secp256k1::{PublicKey, Secp256k1};
 	use bech32::u5;
+	use SignedRawInvoice;
 
 	const CHARSET_REV: [i8; 128] = [
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -655,50 +670,55 @@ mod test {
 	}
 
 	#[test]
-	fn test_raw_invoice_deserialization() {
+	fn test_raw_signed_invoice_deserialization() {
 		use TaggedField::*;
 		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
-		use {RawInvoice, RawHrp, RawDataPart, Currency, Sha256};
+		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256};
 
 		assert_eq!(
 			"lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmw\
 			wd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq8rkx3yf5tcsyz3d73gafnh3cax9rn449d9p5uxz9\
 			ezhhypd0elx87sjle52x86fux2ypatgddc6k63n7erqz25le42c4u4ecky03ylcqca784w".parse(),
-			Ok(
-				RawInvoice {
+			Ok(SignedRawInvoice {
+				raw_invoice: RawInvoice {
 					hrp: RawHrp {
 						currency: Currency::Bitcoin,
 						raw_amount: None,
 						si_prefix: None,
 					},
 					data: RawDataPart {
-						timestamp: 1496314658,
-						tagged_fields: vec![
-							PaymentHash(Sha256([
-								0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
-								0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
-								0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
-							])).into(),
-							Description(::Description::new("Please consider supporting this project".to_owned()).unwrap()).into(),
-						],
-						signature: RecoverableSignature::from_compact(
-							&Secp256k1::without_caps(),
-							&[
-								0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
-								0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
-								0x4e, 0x18, 0x45, 0xc8, 0xaf, 0x72, 0x05, 0xaf, 0xcf, 0xcc, 0x7f,
-								0x42, 0x5f, 0xcd, 0x14, 0x63, 0xe9, 0x3c, 0x32, 0x88, 0x1e, 0xad,
-								0x0d, 0x6e, 0x35, 0x6d, 0x46, 0x7e, 0xc8, 0xc0, 0x25, 0x53, 0xf9,
-								0xaa, 0xb1, 0x5e, 0x57, 0x38, 0xb1, 0x1f, 0x12, 0x7f
-							],
-							RecoveryId::from_i32(0).unwrap()
-						).unwrap(),
+					timestamp: 1496314658,
+					tagged_fields: vec ! [
+						PaymentHash(Sha256([
+							0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
+							0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
+							0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
+						])).into(),
+						Description(
+							::Description::new(
+								"Please consider supporting this project".to_owned()
+							).unwrap()
+						).into(),
+					],
 					},
-					hash: Some([
-						0xc3, 0xd4, 0xe8, 0x3f, 0x64, 0x6f, 0xa7, 0x9a, 0x39, 0x3d, 0x75, 0x27,
-						0x7b, 0x1d, 0x85, 0x8d, 0xb1, 0xd1, 0xf7, 0xab, 0x71, 0x37, 0xdc, 0xb7,
-						0x83, 0x5d, 0xb2, 0xec, 0xd5, 0x18, 0xe1, 0xc9
-					]),
+					},
+				hash: [
+					0xc3, 0xd4, 0xe8, 0x3f, 0x64, 0x6f, 0xa7, 0x9a, 0x39, 0x3d, 0x75, 0x27,
+					0x7b, 0x1d, 0x85, 0x8d, 0xb1, 0xd1, 0xf7, 0xab, 0x71, 0x37, 0xdc, 0xb7,
+					0x83, 0x5d, 0xb2, 0xec, 0xd5, 0x18, 0xe1, 0xc9
+				],
+				signature: Signature(RecoverableSignature::from_compact(
+					& Secp256k1::without_caps(),
+					& [
+						0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
+						0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
+						0x4e, 0x18, 0x45, 0xc8, 0xaf, 0x72, 0x05, 0xaf, 0xcf, 0xcc, 0x7f,
+						0x42, 0x5f, 0xcd, 0x14, 0x63, 0xe9, 0x3c, 0x32, 0x88, 0x1e, 0xad,
+						0x0d, 0x6e, 0x35, 0x6d, 0x46, 0x7e, 0xc8, 0xc0, 0x25, 0x53, 0xf9,
+						0xaa, 0xb1, 0x5e, 0x57, 0x38, 0xb1, 0x1f, 0x12, 0x7f
+					],
+					RecoveryId::from_i32(0).unwrap()
+				).unwrap()),
 				}
 			)
 		)
