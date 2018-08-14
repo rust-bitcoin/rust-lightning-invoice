@@ -195,17 +195,17 @@ pub mod constants {
 	pub const TAG_MIN_FINAL_CLTV_EXPIRY: u8 = 24;
 	pub const TAG_FALLBACK: u8 = 9;
 	pub const TAG_ROUTE: u8 = 3;
+}
 
-	/// # FOR INTERNAL USE ONLY! READ BELOW!
-	///
-	/// It's a convenience function to convert `u8` tags to `u5` tags. Therefore `tag` has to
-	/// be in range `[0..32]`.
-	///
-	/// # Panics
-	/// If the `tag` value is not in the range `[0..32]`.
-	pub(crate) fn as_u5(tag: u8) -> u5 {
-		u5::try_from_u8(tag).unwrap()
-	}
+/// # FOR INTERNAL USE ONLY! READ BELOW!
+///
+/// It's a convenience function to convert `u8` tags to `u5` tags. Therefore `tag` has to
+/// be in range `[0..32]`.
+///
+/// # Panics
+/// If the `tag` value is not in the range `[0..32]`.
+fn as_u5(tag: u8) -> u5 {
+	u5::try_from_u8(tag).unwrap()
 }
 
 impl SignedRawInvoice {
@@ -317,15 +317,22 @@ impl RawInvoice {
 	pub fn known_tagged_fields(&self)
 		-> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>>
 	{
-		self.data.tagged_fields.iter().filter_map(|raw| match raw {
-			RawTaggedField::KnownSemantics(tf) => Some(tf),
-			_ => None,
-		})
+		// For 1.14.0 compatibility: closures' types can't be written an fn()->() in the
+		// function's type signature.
+		// TODO: refactor once impl Trait is available
+		fn match_raw(raw: &RawTaggedField) -> Option<&TaggedField> {
+			match raw {
+				&RawTaggedField::KnownSemantics(ref tf) => Some(tf),
+				_ => None,
+			}
+		}
+
+		self.data.tagged_fields.iter().filter_map(match_raw )
 	}
 
 	pub fn payee_pub_key(&self) -> Option<&PayeePubKey> {
 		self.known_tagged_fields().filter_map(|tf| match tf {
-			TaggedField::PayeePubKey(ref pk) => Some(pk),
+			&TaggedField::PayeePubKey(ref pk) => Some(pk),
 			_ => None
 		}).next()
 	}
@@ -333,8 +340,6 @@ impl RawInvoice {
 
 impl Invoice {
 	fn check_field_counts(&self) -> Result<(), SemanticError> {
-		use constants::as_u5;
-
 		let counts = self.tagged_fields()
 			.map(|tf| tf.tag())
 			.collect::<Counter<u5>>();
