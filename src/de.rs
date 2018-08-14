@@ -50,12 +50,16 @@ impl FromStr for RawInvoice {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		let (hrp, data) = Bech32::from_str_lenient(s)?.into_parts();
 
-		let hrp: RawHrp = hrp.parse()?;
+		let raw_hrp: RawHrp = hrp.parse()?;
 		let data_part = RawDataPart::from_base32(&data)?;
 
 		Ok(RawInvoice {
-			hrp: hrp,
+			hrp: raw_hrp,
 			data: data_part,
+			hash: Some(RawInvoice::hash_from_parts(
+				hrp.as_bytes(),
+				&data[..data.len()-104]
+			)),
 		})
 	}
 }
@@ -690,6 +694,11 @@ mod test {
 							RecoveryId::from_i32(0).unwrap()
 						).unwrap(),
 					},
+					hash: Some([
+						0xc3, 0xd4, 0xe8, 0x3f, 0x64, 0x6f, 0xa7, 0x9a, 0x39, 0x3d, 0x75, 0x27,
+						0x7b, 0x1d, 0x85, 0x8d, 0xb1, 0xd1, 0xf7, 0xab, 0x71, 0x37, 0xdc, 0xb7,
+						0x83, 0x5d, 0xb2, 0xec, 0xd5, 0x18, 0xe1, 0xc9
+					]),
 				}
 			)
 		)

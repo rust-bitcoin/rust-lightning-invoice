@@ -10,3 +10,4 @@ regex = "0.2"
 secp256k1 = "0.10"
 bitcoin = "0.13"
 num-traits = "0.2"
+bitcoin_hashes = {git = "https://github.com/rust-bitcoin/bitcoin_hashes"}

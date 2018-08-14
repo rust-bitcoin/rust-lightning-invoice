@@ -1,16 +1,29 @@
 extern crate bech32;
+extern crate bitcoin_hashes;
 extern crate num_traits;
 extern crate regex;
 extern crate secp256k1;
 
 use bech32::u5;
+use bitcoin_hashes::Hash;
+use bitcoin_hashes::sha256::Sha256Hash;
 
 use secp256k1::key::PublicKey;
 use secp256k1::RecoverableSignature;
 use std::ops::Deref;
 
+use util::Counter;
+use std::iter::FilterMap;
+use std::slice::Iter;
+
 mod de;
 mod ser;
+mod util;
+
+pub struct Invoice {
+	raw_invoice: RawInvoice,
+
+}
 
 /// Represents an syntactically correct Invoice for a payment on the lightning network as defined in
 /// [BOLT #11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md).
@@ -18,10 +31,19 @@ mod ser;
 #[derive(Eq, PartialEq, Debug)]
 pub struct RawInvoice {
 	/// human readable part
-	pub hrp: RawHrp,
+	hrp: RawHrp,
 
 	/// data part
-	pub data: RawDataPart,
+	data: RawDataPart,
+
+	/// Hash of the HRP and data part minus the signature that will be used to check the signature.
+	///
+	/// * if the `RawInvoice` was deserialized this field is filled from the beginning since it's
+	/// not guaranteed that encoding it again will lead to the same result since integers could have
+	/// been encoded with leading zeroes.
+	/// * if the `RawInvoice` was constructed manually the hash will be None
+	///
+	hash: Option<[u8; 32]>,
 }
 
 /// Data of the `RawInvoice` that is encoded in the human readable part
@@ -147,6 +169,8 @@ pub struct RouteHop {
 }
 
 pub mod constants {
+	use bech32::u5;
+
 	pub const TAG_PAYMENT_HASH: u8 = 1;
 	pub const TAG_DESCRIPTION: u8 = 13;
 	pub const TAG_PAYEE_PUB_KEY: u8 = 19;
@@ -155,6 +179,112 @@ pub mod constants {
 	pub const TAG_MIN_FINAL_CLTV_EXPIRY: u8 = 24;
 	pub const TAG_FALLBACK: u8 = 9;
 	pub const TAG_ROUTE: u8 = 3;
+
+	/// # FOR INTERNAL USE ONLY! READ BELOW!
+	///
+	/// It's a convenience function to convert `u8` tags to `u5` tags. Therefore `tag` has to
+	/// be in range `[0..32]`.
+	///
+	/// # Panics
+	/// If the `tag` value is not in the range `[0..32]`.
+	pub(crate) fn as_u5(tag: u8) -> u5 {
+		u5::try_from_u8(tag).unwrap()
+	}
+}
+
+impl RawInvoice {
+	pub fn hrp(&self) -> &RawHrp {
+		&self.hrp
+	}
+
+	pub fn data(&self) -> &RawDataPart {
+		&self.data
+	}
+
+	fn hash_from_parts(hrp_bytes: &[u8], data_without_signature: &[u5]) -> [u8; 32] {
+		use bech32::FromBase32;
+
+		let mut preimage = Vec::<u8>::from(hrp_bytes);
+
+		let mut data_part = Vec::from(data_without_signature);
+		let overhang = (data_part.len() * 5) % 8;
+		if overhang > 0 {
+			// add padding if data does not end at a byte boundary
+			data_part.push(u5::try_from_u8(0).unwrap());
+
+			// if overhang is in (1..3) we need to add u5(0) padding two times
+			if overhang < 3 {
+				data_part.push(u5::try_from_u8(0).unwrap());
+			}
+		}
+
+		preimage.extend_from_slice(&Vec::<u8>::from_base32(&data_part)
+			.expect("No padding error may occur due to appended zero above."));
+
+		let mut hash: [u8; 32] = Default::default();
+		hash.copy_from_slice(&Sha256Hash::hash(&preimage)[..]);
+		hash
+	}
+
+	pub fn hash(&self) -> [u8; 32] {
+		use bech32::ToBase32;
+
+		if let Some(hash) = self.hash {
+			hash
+		} else {
+			let b32_data = self.data.to_base32();
+			RawInvoice::hash_from_parts(
+				self.hrp.to_string().as_bytes(),
+				&b32_data[..b32_data.len()-104]
+			)
+		}
+	}
+}
+
+impl Invoice {
+	fn check_field_counts(&self) -> Result<(), SemanticError> {
+		use constants::as_u5;
+
+		let counts = self.get_tagged_fields()
+			.map(|tf| tf.tag())
+			.collect::<Counter<u5>>();
+
+
+		// "A writer MUST include exactly one p field […]."
+		let payment_hash_cnt = counts.count(&as_u5(constants::TAG_PAYMENT_HASH));
+		if payment_hash_cnt < 1 {
+			return Err(SemanticError::NoPaymentHash);
+		}
+		if payment_hash_cnt > 1 {
+			return Err(SemanticError::MultiplePaymentHashes);
+		}
+
+		// "A writer MUST include either exactly one d or exactly one h field."
+		let description_cnt = counts.count(&as_u5(constants::TAG_DESCRIPTION));
+		let description_hash_cnt = counts.count(&as_u5(constants::TAG_DESCRIPTION_HASH));
+		if description_cnt + description_hash_cnt < 1 {
+			return Err(SemanticError::NoDescription);
+		}
+		if description_cnt + description_hash_cnt > 1 {
+			return  Err(SemanticError::MultipleDescriptions);
+		}
+
+		Ok(())
+	}
+
+	pub fn get_tagged_fields(&self) -> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>> {
+		self.raw_invoice.data.tagged_fields.iter().filter_map(|raw| match raw {
+			RawTaggedField::KnownSemantics(tf) => Some(tf),
+			_ => None,
+		})
+	}
+
+	fn field_payee_pub_key(&self) -> Option<&PayeePubKey> {
+		self.get_tagged_fields().filter_map(|tf| match tf {
+			&TaggedField::PayeePubKey(ref pk) => Some(pk),
+			_ => None,
+		}).next()
+	}
 }
 
 impl From<TaggedField> for RawTaggedField {
@@ -263,4 +393,106 @@ pub enum CreationError {
 
 	/// The specified route has too many hops and can't be encoded
 	RouteTooLong,
+}
+
+/// Errors that may occur when converting a `RawInvoice` to an `Invoice`. They relate to the
+/// requirements sections in BOLT #11
+#[derive(Eq, PartialEq, Debug)]
+pub enum SemanticError {
+	NoPaymentHash,
+	MultiplePaymentHashes,
+
+	NoDescription,
+	MultipleDescriptions,
+}
+
+#[cfg(test)]
+mod test {
+
+	#[test]
+	fn test_calc_invoice_hash() {
+		use ::{RawInvoice, RawHrp, RawDataPart, Currency};
+		use secp256k1::*;
+		use ::TaggedField::*;
+
+		let invoice = RawInvoice {
+			hrp: RawHrp {
+				currency: Currency::Bitcoin,
+				raw_amount: None,
+				si_prefix: None,
+			},
+			data: RawDataPart {
+				timestamp: 1496314658,
+				tagged_fields: vec![
+					PaymentHash(::Sha256([
+						0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
+						0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
+						0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
+					])).into(),
+					Description(::Description::new("Please consider supporting this project".to_owned()).unwrap()).into(),
+				],
+				signature: RecoverableSignature::from_compact(
+					&Secp256k1::without_caps(),
+					&[
+						0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
+						0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
+						0x4e, 0x18, 0x45, 0xc8, 0xaf, 0x72, 0x05, 0xaf, 0xcf, 0xcc, 0x7f,
+						0x42, 0x5f, 0xcd, 0x14, 0x63, 0xe9, 0x3c, 0x32, 0x88, 0x1e, 0xad,
+						0x0d, 0x6e, 0x35, 0x6d, 0x46, 0x7e, 0xc8, 0xc0, 0x25, 0x53, 0xf9,
+						0xaa, 0xb1, 0x5e, 0x57, 0x38, 0xb1, 0x1f, 0x12, 0x7f
+					],
+					RecoveryId::from_i32(0).unwrap()
+				).unwrap(),
+			},
+			hash: None,
+		};
+
+		let expected_hash = [
+			0xc3, 0xd4, 0xe8, 0x3f, 0x64, 0x6f, 0xa7, 0x9a, 0x39, 0x3d, 0x75, 0x27, 0x7b, 0x1d,
+			0x85, 0x8d, 0xb1, 0xd1, 0xf7, 0xab, 0x71, 0x37, 0xdc, 0xb7, 0x83, 0x5d, 0xb2, 0xec,
+			0xd5, 0x18, 0xe1, 0xc9
+		];
+
+		assert_eq!(invoice.hash(), expected_hash)
+	}
+
+	#[test]
+	fn test_stored_invoice_hash() {
+		use ::{RawInvoice, RawHrp, RawDataPart, Currency};
+		use secp256k1::*;
+		use ::TaggedField::*;
+
+		let expected_hash = [
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00
+		];
+
+		let invoice = RawInvoice {
+			hrp: RawHrp {
+				currency: Currency::Bitcoin,
+				raw_amount: None,
+				si_prefix: None,
+			},
+			data: RawDataPart {
+				timestamp: 1496314658,
+				tagged_fields: vec![],
+				signature: RecoverableSignature::from_compact(
+					&Secp256k1::without_caps(),
+					&[
+						0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
+						0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
+						0x4e, 0x18, 0x45, 0xc8, 0xaf, 0x72, 0x05, 0xaf, 0xcf, 0xcc, 0x7f,
+						0x42, 0x5f, 0xcd, 0x14, 0x63, 0xe9, 0x3c, 0x32, 0x88, 0x1e, 0xad,
+						0x0d, 0x6e, 0x35, 0x6d, 0x46, 0x7e, 0xc8, 0xc0, 0x25, 0x53, 0xf9,
+						0xaa, 0xb1, 0x5e, 0x57, 0x38, 0xb1, 0x1f, 0x12, 0x7f
+					],
+					RecoveryId::from_i32(0).unwrap()
+				).unwrap(),
+			},
+			hash: Some(expected_hash),
+		};
+
+		assert_eq!(invoice.hash(), expected_hash)
+	}
 }
