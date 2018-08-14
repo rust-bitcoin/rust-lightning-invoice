@@ -9,7 +9,7 @@ use bitcoin_hashes::Hash;
 use bitcoin_hashes::sha256::Sha256Hash;
 
 use secp256k1::key::PublicKey;
-use secp256k1::RecoverableSignature;
+use secp256k1::{Message, RecoverableSignature, Secp256k1};
 use std::ops::Deref;
 
 use util::Counter;
@@ -22,7 +22,7 @@ mod util;
 
 /// Represents a semantically correct lightning BOLT11 invoice
 pub struct Invoice {
-	raw_invoice: SignedRawInvoice,
+	signed_invoice: SignedRawInvoice,
 
 }
 
@@ -228,6 +228,47 @@ impl SignedRawInvoice {
 	pub fn signature(&self) -> &Signature {
 		&self.signature
 	}
+
+	pub fn recover_payee_pub_key(&self) -> Result<PayeePubKey, secp256k1::Error> {
+		let hash = Message::from_slice(&self.hash[..])
+			.expect("Hash is 32 bytes long, same as MESSAGE_SIZE");
+
+		Ok(PayeePubKey(Secp256k1::new().recover(
+			&hash,
+			&self.signature
+		)?))
+	}
+
+	pub fn check_signature(&self) -> bool {
+		let included_pub_key = self.raw_invoice.payee_pub_key();
+
+		let mut recovered_pub_key = Option::None;
+		if recovered_pub_key.is_none() {
+			let recovered = match self.recover_payee_pub_key() {
+				Ok(pk) => pk,
+				Err(_) => return false,
+			};
+			recovered_pub_key = Some(recovered);
+		}
+
+		let pub_key = included_pub_key.or(recovered_pub_key.as_ref())
+			.expect("One is always present");
+
+		let hash = Message::from_slice(&self.hash[..])
+			.expect("Hash is 32 bytes long, same as MESSAGE_SIZE");
+
+		let secp_context = Secp256k1::new();
+		let verification_result = secp_context.verify(
+			&hash,
+			&self.signature.to_standard(&secp_context),
+			pub_key
+		);
+
+		match verification_result {
+			Ok(()) => true,
+			Err(_) => false,
+		}
+	}
 }
 
 impl RawInvoice {
@@ -272,13 +313,29 @@ impl RawInvoice {
 			&self.data.to_base32()
 		)
 	}
+
+	pub fn known_tagged_fields(&self)
+		-> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>>
+	{
+		self.data.tagged_fields.iter().filter_map(|raw| match raw {
+			RawTaggedField::KnownSemantics(tf) => Some(tf),
+			_ => None,
+		})
+	}
+
+	pub fn payee_pub_key(&self) -> Option<&PayeePubKey> {
+		self.known_tagged_fields().filter_map(|tf| match tf {
+			TaggedField::PayeePubKey(ref pk) => Some(pk),
+			_ => None
+		}).next()
+	}
 }
 
 impl Invoice {
 	fn check_field_counts(&self) -> Result<(), SemanticError> {
 		use constants::as_u5;
 
-		let counts = self.get_tagged_fields()
+		let counts = self.tagged_fields()
 			.map(|tf| tf.tag())
 			.collect::<Counter<u5>>();
 
@@ -305,15 +362,13 @@ impl Invoice {
 		Ok(())
 	}
 
-	pub fn get_tagged_fields(&self) -> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>> {
-		self.raw_invoice.raw_invoice.data.tagged_fields.iter().filter_map(|raw| match raw {
-			RawTaggedField::KnownSemantics(tf) => Some(tf),
-			_ => None,
-		})
+	pub fn tagged_fields(&self)
+		-> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>> {
+		self.signed_invoice.raw_invoice().known_tagged_fields()
 	}
 
 	fn field_payee_pub_key(&self) -> Option<&PayeePubKey> {
-		self.get_tagged_fields().filter_map(|tf| match tf {
+		self.tagged_fields().filter_map(|tf| match tf {
 			&TaggedField::PayeePubKey(ref pk) => Some(pk),
 			_ => None,
 		}).next()
@@ -482,5 +537,69 @@ mod test {
 		];
 
 		assert_eq!(invoice.hash(), expected_hash)
+	}
+
+	#[test]
+	fn test_check_signature() {
+		use TaggedField::*;
+		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
+		use secp256k1::key::{SecretKey, PublicKey};
+		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256};
+
+		let mut invoice = SignedRawInvoice {
+			raw_invoice: RawInvoice {
+				hrp: RawHrp {
+					currency: Currency::Bitcoin,
+					raw_amount: None,
+					si_prefix: None,
+				},
+				data: RawDataPart {
+					timestamp: 1496314658,
+					tagged_fields: vec ! [
+						PaymentHash(Sha256([
+							0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
+							0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
+							0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
+						])).into(),
+						Description(
+							::Description::new(
+								"Please consider supporting this project".to_owned()
+							).unwrap()
+						).into(),
+					],
+				},
+			},
+			hash: [
+				0xc3, 0xd4, 0xe8, 0x3f, 0x64, 0x6f, 0xa7, 0x9a, 0x39, 0x3d, 0x75, 0x27,
+				0x7b, 0x1d, 0x85, 0x8d, 0xb1, 0xd1, 0xf7, 0xab, 0x71, 0x37, 0xdc, 0xb7,
+				0x83, 0x5d, 0xb2, 0xec, 0xd5, 0x18, 0xe1, 0xc9
+			],
+			signature: Signature(RecoverableSignature::from_compact(
+				& Secp256k1::without_caps(),
+				& [
+					0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
+					0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
+					0x4e, 0x18, 0x45, 0xc8, 0xaf, 0x72, 0x05, 0xaf, 0xcf, 0xcc, 0x7f,
+					0x42, 0x5f, 0xcd, 0x14, 0x63, 0xe9, 0x3c, 0x32, 0x88, 0x1e, 0xad,
+					0x0d, 0x6e, 0x35, 0x6d, 0x46, 0x7e, 0xc8, 0xc0, 0x25, 0x53, 0xf9,
+					0xaa, 0xb1, 0x5e, 0x57, 0x38, 0xb1, 0x1f, 0x12, 0x7f
+				],
+				RecoveryId::from_i32(0).unwrap()
+			).unwrap()),
+		};
+
+		assert!(invoice.check_signature());
+
+		let private_key = SecretKey::from_slice(
+			&Secp256k1::without_caps(),
+			&[
+				0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f, 0xe2,
+				0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04, 0xa8, 0xca,
+				0x3b, 0x2d, 0xb7, 0x34
+			][..]
+		).unwrap();
+		let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &private_key);
+
+		assert_eq!(invoice.recover_payee_pub_key(), Ok(::PayeePubKey(public_key)));
 	}
 }
