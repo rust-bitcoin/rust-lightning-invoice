@@ -126,6 +126,7 @@ pub enum TaggedField {
 	Route(Route),
 }
 
+// TODO: use struct from bitcoin_hashes
 /// SHA-256 hash
 #[derive(Eq, PartialEq, Debug)]
 pub struct Sha256(pub [u8; 32]);
@@ -271,15 +272,32 @@ impl SignedRawInvoice {
 	}
 }
 
+/// Finds the first element of an enum stream of a given variant and extracts one member of the
+/// variant. If no element was found `None` gets returned.
+///
+/// The following example would extract the first
+/// ```
+/// use Enum::*
+///
+/// enum Enum {
+/// 	A(u8),
+/// 	B(u16)
+/// }
+///
+/// let elements = vec![A(1), A(2), B(3), A(4)]
+///
+/// assert_eq!(find_extract!(elements.iter(), Enum::B(ref x), x), Some(3u16))
+/// ```
+macro_rules! find_extract {
+    ($iter:expr, $enm:pat, $enm_var:ident) => {
+    	$iter.filter_map(|tf| match tf {
+			&$enm => Some($enm_var),
+			_ => None,
+		}).next()
+    };
+}
+
 impl RawInvoice {
-	pub fn hrp(&self) -> &RawHrp {
-		&self.hrp
-	}
-
-	pub fn data(&self) -> &RawDataPart {
-		&self.data
-	}
-
 	fn hash_from_parts(hrp_bytes: &[u8], data_without_signature: &[u5]) -> [u8; 32] {
 		use bech32::FromBase32;
 
@@ -330,11 +348,42 @@ impl RawInvoice {
 		self.data.tagged_fields.iter().filter_map(match_raw )
 	}
 
+	pub fn payment_hash(&self) -> Option<&Sha256> {
+		find_extract!(self.known_tagged_fields(), TaggedField::PaymentHash(ref x), x)
+	}
+
+	pub fn description(&self) -> Option<&Description> {
+		find_extract!(self.known_tagged_fields(), TaggedField::Description(ref x), x)
+	}
+
 	pub fn payee_pub_key(&self) -> Option<&PayeePubKey> {
+		find_extract!(self.known_tagged_fields(), TaggedField::PayeePubKey(ref x), x)
+	}
+
+	pub fn description_hash(&self) -> Option<&Sha256> {
+		find_extract!(self.known_tagged_fields(), TaggedField::DescriptionHash(ref x), x)
+	}
+
+	pub fn expiry_time(&self) -> Option<&ExpiryTime> {
+		find_extract!(self.known_tagged_fields(), TaggedField::ExpiryTime(ref x), x)
+	}
+
+	pub fn min_final_cltv_expiry(&self) -> Option<&MinFinalCltvExpiry> {
+		find_extract!(self.known_tagged_fields(), TaggedField::MinFinalCltvExpiry(ref x), x)
+	}
+
+	pub fn fallbacks(&self) -> Vec<&Fallback> {
 		self.known_tagged_fields().filter_map(|tf| match tf {
-			&TaggedField::PayeePubKey(ref pk) => Some(pk),
-			_ => None
-		}).next()
+			&TaggedField::Fallback(ref f) => Some(f),
+			num_traits => None,
+		}).collect::<Vec<&Fallback>>()
+	}
+
+	pub fn routes(&self) -> Vec<&Route> {
+		self.known_tagged_fields().filter_map(|tf| match tf {
+			&TaggedField::Route(ref r) => Some(r),
+			num_traits => None,
+		}).collect::<Vec<&Route>>()
 	}
 }
 
