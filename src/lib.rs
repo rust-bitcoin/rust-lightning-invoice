@@ -12,18 +12,21 @@ use secp256k1::key::PublicKey;
 use secp256k1::{Message, RecoverableSignature, Secp256k1};
 use std::ops::Deref;
 
-use util::Counter;
 use std::iter::FilterMap;
 use std::slice::Iter;
 
 mod de;
 mod ser;
-mod util;
 
 /// Represents a semantically correct lightning BOLT11 invoice
 pub struct Invoice {
 	signed_invoice: SignedRawInvoice,
 
+}
+
+pub enum InvoiceDescription<'f> {
+	Direct(&'f Description),
+	Hash(&'f Sha256)
 }
 
 /// Represents a signed `RawInvoice` with cached hash.
@@ -388,32 +391,57 @@ impl RawInvoice {
 }
 
 impl Invoice {
+	/// Check that all mandatory fields are present
 	fn check_field_counts(&self) -> Result<(), SemanticError> {
-		let counts = self.tagged_fields()
-			.map(|tf| tf.tag())
-			.collect::<Counter<u5>>();
-
-
 		// "A writer MUST include exactly one p field […]."
-		let payment_hash_cnt = counts.count(&as_u5(constants::TAG_PAYMENT_HASH));
+		let payment_hash_cnt = self.tagged_fields().filter(|tf| match tf {
+			TaggedField::PaymentHash(_) => true,
+			_ => false,
+		}).count();
 		if payment_hash_cnt < 1 {
 			return Err(SemanticError::NoPaymentHash);
-		}
-		if payment_hash_cnt > 1 {
+		} else if payment_hash_cnt > 1 {
 			return Err(SemanticError::MultiplePaymentHashes);
 		}
 
 		// "A writer MUST include either exactly one d or exactly one h field."
-		let description_cnt = counts.count(&as_u5(constants::TAG_DESCRIPTION));
-		let description_hash_cnt = counts.count(&as_u5(constants::TAG_DESCRIPTION_HASH));
-		if description_cnt + description_hash_cnt < 1 {
+		let description_cnt = self.tagged_fields().filter(|tf| match tf {
+			TaggedField::Description(_) | TaggedField::DescriptionHash(_) => true,
+			_ => false,
+		}).count();
+		if  description_cnt < 1 {
 			return Err(SemanticError::NoDescription);
-		}
-		if description_cnt + description_hash_cnt > 1 {
+		} else if description_cnt > 1 {
 			return  Err(SemanticError::MultipleDescriptions);
 		}
 
 		Ok(())
+	}
+
+	/// Check that the invoice is signed correctly and that key recovery works
+	fn check_signature(&self) -> Result<(), SemanticError> {
+		match self.signed_invoice.recover_payee_pub_key() {
+			Err(secp256k1::Error::InvalidRecoveryId) =>
+				return Err(SemanticError::InvalidRecoveryId),
+			Err(_) => panic!("no other error may occur"),
+			Ok(_) => {},
+		}
+
+		if !self.signed_invoice.check_signature() {
+			return Err(SemanticError::InvalidSignature);
+		}
+
+		Ok(())
+	}
+
+	pub fn from_signed(signed_invoice: SignedRawInvoice) -> Result<Self, SemanticError> {
+		let invoice = Invoice {
+			signed_invoice: signed_invoice,
+		};
+		invoice.check_field_counts()?;
+		invoice.check_signature()?;
+
+		Ok(invoice)
 	}
 
 	pub fn tagged_fields(&self)
@@ -421,11 +449,41 @@ impl Invoice {
 		self.signed_invoice.raw_invoice().known_tagged_fields()
 	}
 
-	fn field_payee_pub_key(&self) -> Option<&PayeePubKey> {
-		self.tagged_fields().filter_map(|tf| match tf {
-			&TaggedField::PayeePubKey(ref pk) => Some(pk),
-			_ => None,
-		}).next()
+	pub fn payment_hash(&self) -> &Sha256 {
+		self.signed_invoice.payment_hash().expect("checked by constructor")
+	}
+
+	pub fn description(&self) -> InvoiceDescription {
+		if let Some(ref direct) = self.signed_invoice.description() {
+			return InvoiceDescription::Direct(direct);
+		} else if let Some(ref hash) = self.signed_invoice.description_hash() {
+			return InvoiceDescription::Hash(hash);
+		}
+		unreachable!("ensured by constructor");
+	}
+
+	pub fn payee_pub_key(&self) -> Option<&PayeePubKey> {
+		self.signed_invoice.payee_pub_key()
+	}
+
+	pub fn recover_payee_pub_key(&self) -> PayeePubKey {
+		self.signed_invoice.recover_payee_pub_key().expect("was checked by constructor")
+	}
+
+	pub fn expiry_time(&self) -> Option<&ExpiryTime> {
+		self.signed_invoice.expiry_time()
+	}
+
+	pub fn min_final_cltv_expiry(&self) -> Option<&MinFinalCltvExpiry> {
+		self.signed_invoice.min_final_cltv_expiry()
+	}
+
+	pub fn fallbacks(&self) -> Vec<&Fallback> {
+		self.signed_invoice.fallbacks()
+	}
+
+	pub fn routes(&self) -> Vec<&Route> {
+		self.signed_invoice.routes()
 	}
 }
 
@@ -535,6 +593,14 @@ impl Deref for Signature {
 	}
 }
 
+impl Deref for SignedRawInvoice {
+	type Target = RawInvoice;
+
+	fn deref(&self) -> &RawInvoice {
+		&self.raw_invoice
+	}
+}
+
 /// Errors that may occur when constructing a new `RawInvoice` or `Invoice`
 #[derive(Eq, PartialEq, Debug)]
 pub enum CreationError {
@@ -554,6 +620,9 @@ pub enum SemanticError {
 
 	NoDescription,
 	MultipleDescriptions,
+
+	InvalidRecoveryId,
+	InvalidSignature,
 }
 
 #[cfg(test)]
