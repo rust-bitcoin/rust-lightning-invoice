@@ -16,6 +16,26 @@ use std::slice::Iter;
 
 mod de;
 mod ser;
+mod tb;
+
+/// Builder for `Invoice`s.
+///
+/// # Type parameters
+/// The two parameters `D` and `H` signal if the builder already contains the correct amount of the
+/// given field:
+///  * `D`: exactly one `Description` or `DescriptionHash`
+///  * `H`: exactly one `PaymentHash`
+pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool> {
+	currency: Currency,
+	amount: Option<u64>,
+	si_prefix: Option<SiPrefix>,
+	timestamp: Option<u64>,
+	tagged_fields: Vec<TaggedField>,
+	error: Option<CreationError>,
+
+	phantom_d: std::marker::PhantomData<D>,
+	phantom_h: std::marker::PhantomData<H>,
+}
 
 /// Represents a semantically correct lightning BOLT11 invoice
 pub struct Invoice {
@@ -211,6 +231,176 @@ fn as_u5(tag: u8) -> u5 {
 	u5::try_from_u8(tag).unwrap()
 }
 
+impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
+	pub fn new(currrency: Currency) -> InvoiceBuilder<tb::False, tb::False> {
+		InvoiceBuilder {
+			currency: currrency,
+			amount: None,
+			si_prefix: None,
+			timestamp: None,
+			tagged_fields: Vec::new(),
+			error: None,
+
+			phantom_d: std::marker::PhantomData,
+			phantom_h: std::marker::PhantomData,
+		}
+	}
+
+	fn set_flags<DN: tb::Bool, HN: tb::Bool>(self) -> InvoiceBuilder<DN, HN> {
+		InvoiceBuilder::<DN, HN> {
+			currency: self.currency,
+			amount: self.amount,
+			si_prefix: self.si_prefix,
+			timestamp: self.timestamp,
+			tagged_fields: self.tagged_fields,
+			error: self.error,
+
+			phantom_d: std::marker::PhantomData,
+			phantom_h: std::marker::PhantomData,
+		}
+	}
+
+	pub fn amount_pico_btc(mut self, amount: u64) -> Self {
+		// TODO: calculate optimal SI prefix
+		self.amount = Some(amount);
+		self.si_prefix = None;
+		self
+	}
+
+	pub fn amount_si(mut self, amount: u64, si_prefix: SiPrefix) -> Self {
+		self.amount = Some(amount);
+		self.si_prefix = Some(si_prefix);
+		self
+	}
+
+	pub fn timestamp(mut self, time: u64) -> Self {
+		self.timestamp = Some(time);
+		self
+	}
+
+	pub fn payee_pub_key(mut self, pub_key: PublicKey) -> Self {
+		self.tagged_fields.push(TaggedField::PayeePubKey(PayeePubKey(pub_key)));
+		self
+	}
+
+	pub fn expiry_time_seconds(mut self, expiry_seconds: u64) -> Self {
+		self.tagged_fields.push(TaggedField::ExpiryTime(ExpiryTime {seconds: expiry_seconds}));
+		self
+	}
+
+	pub fn min_final_cltv_expiry(mut self, min_final_cltv_expiry: u64) -> Self {
+		self.tagged_fields.push(TaggedField::MinFinalCltvExpiry(MinFinalCltvExpiry(min_final_cltv_expiry)));
+		self
+	}
+
+	pub fn fallback(mut self, fallback: Fallback) -> Self {
+		self.tagged_fields.push(TaggedField::Fallback(fallback));
+		self
+	}
+
+	pub fn route(mut self, route: Route) -> Self {
+		self.tagged_fields.push(TaggedField::Route(route));
+		self
+	}
+
+	pub fn build_raw(self) -> Result<RawInvoice, CreationError> {
+		use std::time::{SystemTime, UNIX_EPOCH};
+
+		// If an error occurred at any time before, return it now
+		if let Some(e) = self.error {
+			return Err(e);
+		}
+
+		let hrp = RawHrp {
+			currency: self.currency,
+			raw_amount: self.amount,
+			si_prefix: self.si_prefix,
+		};
+
+		let timestamp = self.timestamp.unwrap_or_else(|| {
+			let now = SystemTime::now();
+			let since_unix_epoch = now.duration_since(UNIX_EPOCH)
+				.expect("it won't be 1970 ever again");
+			since_unix_epoch.as_secs() as u64
+		});
+
+		let tagged_fields = self.tagged_fields.into_iter().map(|tf| {
+			RawTaggedField::KnownSemantics(tf)
+		}).collect::<Vec<_>>();
+
+		let data = RawDataPart {
+			timestamp: timestamp,
+			tagged_fields: tagged_fields,
+		};
+
+		Ok(RawInvoice {
+			hrp: hrp,
+			data: data,
+		})
+	}
+}
+
+impl<H: tb::Bool> InvoiceBuilder<tb::False, H> {
+	pub fn description(mut self, description: String) -> InvoiceBuilder<tb::True, H> {
+		match Description::new(description) {
+			Ok(d) => self.tagged_fields.push(TaggedField::Description(d)),
+			Err(e) => self.error = Some(e),
+		}
+		self.set_flags()
+	}
+
+	pub fn description_hash(mut self, description_hash: [u8; 32]) -> InvoiceBuilder<tb::True, H> {
+		self.tagged_fields.push(TaggedField::DescriptionHash(Sha256(description_hash)));
+		self.set_flags()
+	}
+}
+
+impl<D: tb::Bool> InvoiceBuilder<D, tb::False> {
+	pub fn payment_hash(mut self, hash: [u8; 32]) -> InvoiceBuilder<D, tb::True> {
+		self.tagged_fields.push(TaggedField::PaymentHash(Sha256(hash)));
+		self.set_flags()
+	}
+}
+
+impl InvoiceBuilder<tb::True, tb::True> {
+	pub fn build_signed<F>(self, sign_function: F) -> Result<Invoice, CreationError>
+		where F: FnOnce(&Message) -> RecoverableSignature
+	{
+		let invoice = self.try_build_signed::<_, ()>(|hash| {
+			Ok(sign_function(hash))
+		});
+
+		match invoice {
+			Ok(i) => Ok(i),
+			Err(SignOrCreationError::CreationError(e)) => Err(e),
+			Err(SignOrCreationError::SignError(())) => unreachable!(),
+		}
+	}
+
+	pub fn try_build_signed<F, E>(self, sign_function: F) -> Result<Invoice, SignOrCreationError<E>>
+		where F: FnOnce(&Message) -> Result<RecoverableSignature, E>
+	{
+		let raw = match self.build_raw() {
+			Ok(r) => r,
+			Err(e) => return Err(SignOrCreationError::CreationError(e)),
+		};
+
+		let signed = match raw.sign(sign_function) {
+			Ok(s) => s,
+			Err(e) => return Err(SignOrCreationError::SignError(e)),
+		};
+
+		let invoice = Invoice {
+			signed_invoice: signed,
+		};
+
+		invoice.check_field_counts().expect("should be ensured by type signature of builder");
+
+		Ok(invoice)
+	}
+}
+
+
 impl SignedRawInvoice {
 	/// Disassembles the `SignedRawInvoice` into it's three parts:
 	///  1. raw invoice
@@ -334,6 +524,21 @@ impl RawInvoice {
 		)
 	}
 
+	pub fn sign<F, E>(self, sign_method: F) -> Result<SignedRawInvoice, E>
+		where F: FnOnce(&Message) -> Result<RecoverableSignature, E>
+	{
+		let raw_hash = self.hash();
+		let hash = Message::from_slice(&raw_hash[..])
+			.expect("Hash is 32 bytes long, same as MESSAGE_SIZE");
+		let signature = sign_method(&hash)?;
+
+		Ok(SignedRawInvoice {
+			raw_invoice: self,
+			hash: raw_hash,
+			signature: Signature(signature),
+		})
+	}
+
 	pub fn known_tagged_fields(&self)
 		-> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>>
 	{
@@ -418,7 +623,7 @@ impl Invoice {
 	}
 
 	/// Check that the invoice is signed correctly and that key recovery works
-	fn check_signature(&self) -> Result<(), SemanticError> {
+	pub fn check_signature(&self) -> Result<(), SemanticError> {
 		match self.signed_invoice.recover_payee_pub_key() {
 			Err(secp256k1::Error::InvalidRecoveryId) =>
 				return Err(SemanticError::InvalidRecoveryId),
@@ -624,6 +829,13 @@ pub enum SemanticError {
 	InvalidSignature,
 }
 
+/// When signing using a fallible method either an user-supplied `SignError` or a `CreationError`
+/// may occur.
+pub enum SignOrCreationError<S> {
+	SignError(S),
+	CreationError(CreationError),
+}
+
 #[cfg(test)]
 mod test {
 
@@ -723,5 +935,12 @@ mod test {
 		let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &private_key);
 
 		assert_eq!(invoice.recover_payee_pub_key(), Ok(::PayeePubKey(public_key)));
+
+		let (raw_invoice, _, _) = invoice.into_parts();
+		let new_signed = raw_invoice.sign::<_, ()>(|hash| {
+			Ok(Secp256k1::new().sign_recoverable(hash, &private_key))
+		}).unwrap();
+
+		assert!(new_signed.check_signature());
 	}
 }
