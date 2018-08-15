@@ -10,13 +10,168 @@ use bech32::{Bech32, u5, FromBase32};
 
 use num_traits::{CheckedAdd, CheckedMul};
 
-use regex::Regex;
-
 use secp256k1;
 use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
 use secp256k1::key::PublicKey;
 
 use super::*;
+
+use self::hrp_sm::parse_hrp;
+
+/// State machine to parse the hrp
+mod hrp_sm {
+	use std::ops::Range;
+
+	#[derive(PartialEq, Eq, Debug)]
+	enum States {
+		Start,
+		ParseL,
+		ParseN,
+		ParseCurrencyPrefix,
+		ParseAmountNumber,
+		ParseAmountSiPrefix,
+	}
+
+	impl States {
+		fn next_state(&self, read_symbol: char) -> Result<States, super::ParseError> {
+			match *self {
+				States::Start => {
+					if read_symbol == 'l' {
+						Ok(States::ParseL)
+					} else {
+						Err(super::ParseError::MalformedHRP)
+					}
+				}
+				States::ParseL => {
+					if read_symbol == 'n' {
+						Ok(States::ParseN)
+					} else {
+						Err(super::ParseError::MalformedHRP)
+					}
+				},
+				States::ParseN => {
+					if !read_symbol.is_numeric() {
+						Ok(States::ParseCurrencyPrefix)
+					} else {
+						Ok(States::ParseAmountNumber)
+					}
+				},
+				States::ParseCurrencyPrefix => {
+					if !read_symbol.is_numeric() {
+						Ok(States::ParseCurrencyPrefix)
+					} else {
+						Ok(States::ParseAmountNumber)
+					}
+				},
+				States::ParseAmountNumber => {
+					if read_symbol.is_numeric() {
+						Ok(States::ParseAmountNumber)
+					} else if ['m', 'u', 'n', 'p'].contains(&read_symbol) {
+						Ok(States::ParseAmountSiPrefix)
+					} else {
+						Err(super::ParseError::MalformedHRP)
+					}
+				},
+				States::ParseAmountSiPrefix => Err(super::ParseError::MalformedHRP),
+			}
+		}
+
+		fn is_final(&self) -> bool {
+			if *self == States::ParseL || *self == States::ParseN {
+				false
+			} else {
+				true
+			}
+		}
+	}
+
+
+	struct StateMachine {
+		state: States,
+		position: usize,
+		currency_prefix: Option<Range<usize>>,
+		amount_number: Option<Range<usize>>,
+		amount_si_prefix: Option<Range<usize>>,
+	}
+
+	impl StateMachine {
+		fn new() -> StateMachine {
+			StateMachine {
+				state: States::Start,
+				position: 0,
+				currency_prefix: None,
+				amount_number: None,
+				amount_si_prefix: None,
+			}
+		}
+
+		fn update_range(range: &mut Option<Range<usize>>, position: usize) {
+			let new_range = match *range {
+				None => Range {start: position, end: position + 1},
+				Some(ref r) => Range {start: r.start, end: r.end + 1},
+			};
+			*range = Some(new_range);
+		}
+
+		fn step(&mut self, c: char) -> Result<(), super::ParseError> {
+			let next_state = self.state.next_state(c)?;
+			match next_state {
+				States::ParseCurrencyPrefix => {
+					StateMachine::update_range(&mut self.currency_prefix, self.position)
+				}
+				States::ParseAmountNumber => {
+					StateMachine::update_range(&mut self.amount_number, self.position)
+				},
+				States::ParseAmountSiPrefix => {
+					StateMachine::update_range(&mut self.amount_si_prefix, self.position)
+				},
+				_ => {}
+			}
+
+			self.position += 1;
+			self.state = next_state;
+			Ok(())
+		}
+
+		fn is_final(&self) -> bool {
+			self.state.is_final()
+		}
+
+		fn currency_prefix(&self) -> &Option<Range<usize>> {
+			&self.currency_prefix
+		}
+
+		fn amount_number(&self) -> &Option<Range<usize>> {
+			&self.amount_number
+		}
+
+		fn amount_si_prefix(&self) -> &Option<Range<usize>> {
+			&self.amount_si_prefix
+		}
+	}
+
+	pub fn parse_hrp(input: &str) -> Result<(&str, &str, &str), super::ParseError> {
+		let mut sm = StateMachine::new();
+		for c in input.chars() {
+			sm.step(c)?;
+		}
+
+		if !sm.is_final() {
+			return Err(super::ParseError::MalformedHRP);
+		}
+
+		let currency = sm.currency_prefix().clone()
+			.map(|r| &input[r]).unwrap_or("");
+		let amount = sm.amount_number().clone()
+			.map(|r| &input[r]).unwrap_or("");
+		let si = sm.amount_si_prefix().clone()
+			.map(|r| &input[r]).unwrap_or("");
+
+		Ok((currency, amount, si))
+	}
+}
+
+
 impl FromStr for super::Currency {
 	type Err = ParseError;
 
@@ -75,25 +230,20 @@ impl FromStr for RawHrp {
 	type Err = ParseError;
 
 	fn from_str(hrp: &str) -> Result<Self, <Self as FromStr>::Err> {
-		let re = Regex::new(r"^ln([^0-9]*)([0-9]*)([munp]?)$").unwrap();
-		let parts = match re.captures(&hrp) {
-			Some(capture_group) => capture_group,
-			None => return Err(ParseError::MalformedHRP)
-		};
+		let parts = parse_hrp(hrp)?;
 
-		let currency = parts[1].parse::<Currency>()?;
+		let currency = parts.0.parse::<Currency>()?;
 
-		let amount = if !parts[2].is_empty() {
-			Some(parts[2].parse::<u64>()?)
+		let amount = if !parts.1.is_empty() {
+			Some(parts.1.parse::<u64>()?)
 		} else {
 			None
 		};
 
-		let si_prefix = &parts[3];
-		let si_prefix: Option<SiPrefix> = if si_prefix.is_empty() {
+		let si_prefix: Option<SiPrefix> = if parts.2.is_empty() {
 			None
 		} else {
-			Some(si_prefix.parse()?)
+			Some(parts.2.parse()?)
 		};
 
 		Ok(RawHrp {

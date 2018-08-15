@@ -1,7 +1,6 @@
 extern crate bech32;
 extern crate bitcoin_hashes;
 extern crate num_traits;
-extern crate regex;
 extern crate secp256k1;
 
 use bech32::u5;
@@ -394,7 +393,7 @@ impl Invoice {
 	/// Check that all mandatory fields are present
 	fn check_field_counts(&self) -> Result<(), SemanticError> {
 		// "A writer MUST include exactly one p field […]."
-		let payment_hash_cnt = self.tagged_fields().filter(|tf| match tf {
+		let payment_hash_cnt = self.tagged_fields().filter(|&tf| match *tf {
 			TaggedField::PaymentHash(_) => true,
 			_ => false,
 		}).count();
@@ -405,7 +404,7 @@ impl Invoice {
 		}
 
 		// "A writer MUST include either exactly one d or exactly one h field."
-		let description_cnt = self.tagged_fields().filter(|tf| match tf {
+		let description_cnt = self.tagged_fields().filter(|&tf| match *tf {
 			TaggedField::Description(_) | TaggedField::DescriptionHash(_) => true,
 			_ => false,
 		}).count();
