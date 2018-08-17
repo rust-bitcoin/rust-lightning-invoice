@@ -24,14 +24,15 @@ pub use de::{ParseError, ParseOrSemanticError};
 /// that only a semantically and syntactically correct Invoice can be built using it.
 ///
 /// ```
-/// # extern crate secp256k1;
-/// # extern crate lightning_invoice;
+/// extern crate secp256k1;
+/// extern crate lightning_invoice;
 ///
 /// use secp256k1::Secp256k1;
 /// use secp256k1::key::SecretKey;
 ///
 /// use lightning_invoice::{Currency, InvoiceBuilder};
 ///
+/// # fn main() {
 /// let private_key = SecretKey::from_slice(
 ///		&Secp256k1::without_caps(),
 ///		&[
@@ -50,6 +51,7 @@ pub use de::{ParseError, ParseOrSemanticError};
 /// 	.unwrap();
 ///
 /// assert!(invoice.to_string().starts_with("lnbc1"));
+/// # }
 /// ```
 ///
 /// # Type parameters
@@ -713,7 +715,6 @@ impl Invoice {
 
 	/// Constructs an `Invoice` from a `SignedInvoice` by checking all its invariants.
 	/// ```
-	/// # extern crate lightning_invoice;
 	/// use lightning_invoice::*;
 	///
 	/// let invoice = "lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdp\

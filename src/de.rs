@@ -200,7 +200,6 @@ impl FromStr for SiPrefix {
 }
 
 /// ```
-/// # extern crate lightning_invoice;
 /// use lightning_invoice::Invoice;
 ///
 /// let invoice = "lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdp\
@@ -220,7 +219,6 @@ impl FromStr for Invoice {
 }
 
 /// ```
-/// # extern crate lightning_invoice;
 /// use lightning_invoice::*;
 ///
 /// let invoice = "lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdp\
