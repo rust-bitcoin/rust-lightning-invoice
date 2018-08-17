@@ -6,6 +6,12 @@ use secp256k1::Secp256k1;
 
 use ::*;
 
+impl Display for Invoice {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+		self.signed_invoice.fmt(f)
+	}
+}
+
 impl Display for SignedRawInvoice {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
 		let hrp = self.raw_invoice.hrp.to_string();

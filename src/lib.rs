@@ -18,7 +18,39 @@ mod de;
 mod ser;
 mod tb;
 
-/// Builder for `Invoice`s.
+pub use de::{ParseError, ParseOrSemanticError};
+
+/// Builder for `Invoice`s. It's the most convenient and advised way to use this library. It ensures
+/// that only a semantically and syntactically correct Invoice can be built using it.
+///
+/// ```
+/// # extern crate secp256k1;
+/// # extern crate lightning_invoice;
+///
+/// use secp256k1::Secp256k1;
+/// use secp256k1::key::SecretKey;
+///
+/// use lightning_invoice::{Currency, InvoiceBuilder};
+///
+/// let private_key = SecretKey::from_slice(
+///		&Secp256k1::without_caps(),
+///		&[
+///			0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f,
+///			0xe2, 0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04,
+/// 		0xa8, 0xca, 0x3b, 0x2d, 0xb7, 0x34
+/// 	][..]
+///	).unwrap();
+///
+/// let invoice = InvoiceBuilder::new(Currency::Bitcoin)
+/// 	.description("Coins pls!".into())
+/// 	.payment_hash([0u8; 32])
+/// 	.build_signed(|hash| {
+/// 		Secp256k1::new().sign_recoverable(hash, &private_key)
+/// 	})
+/// 	.unwrap();
+///
+/// assert!(invoice.to_string().starts_with("lnbc1"));
+/// ```
 ///
 /// # Type parameters
 /// The two parameters `D` and `H` signal if the builder already contains the correct amount of the
@@ -37,10 +69,15 @@ pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool> {
 	phantom_h: std::marker::PhantomData<H>,
 }
 
-/// Represents a semantically correct lightning BOLT11 invoice
+/// Represents a syntactically and semantically correct lightning BOLT11 invoice.
+///
+/// There are three ways to construct an `Invoice`:
+///  1. using `InvoiceBuilder`
+///  2. using `Invoice::from_signed(SignedRawInvoice)`
+///  3. using `str::parse::<Invoice>(&str)`
+#[derive(Eq, PartialEq, Debug)]
 pub struct Invoice {
 	signed_invoice: SignedRawInvoice,
-
 }
 
 pub enum InvoiceDescription<'f> {
@@ -48,10 +85,11 @@ pub enum InvoiceDescription<'f> {
 	Hash(&'f Sha256)
 }
 
-/// Represents a signed `RawInvoice` with cached hash.
+/// Represents a signed `RawInvoice` with cached hash. The signature is not checked and may be
+/// invalid.
 ///
 /// # Invariants
-/// * The hash has to be either from the deserialized invoice or from the serialized `raw_invoice`
+/// The hash has to be either from the deserialized invoice or from the serialized `raw_invoice`.
 #[derive(Eq, PartialEq, Debug)]
 pub struct SignedRawInvoice {
 	/// The rawInvoice that the signature belongs to
@@ -70,10 +108,9 @@ pub struct SignedRawInvoice {
 	signature: Signature,
 }
 
-/// Represents an syntactically correct Invoice for a payment on the lightning network as defined in
-/// [BOLT #11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md),
+/// Represents an syntactically correct Invoice for a payment on the lightning network,
 /// but without the signature information.
-/// De- and encoding should not lead to information loss.
+/// De- and encoding should not lead to information loss but may lead to different hashes.
 #[derive(Eq, PartialEq, Debug)]
 pub struct RawInvoice {
 	/// human readable part
@@ -220,7 +257,7 @@ pub mod constants {
 	pub const TAG_ROUTE: u8 = 3;
 }
 
-/// # FOR INTERNAL USE ONLY! READ BELOW!
+/// FOR INTERNAL USE ONLY! READ BELOW!
 ///
 /// It's a convenience function to convert `u8` tags to `u5` tags. Therefore `tag` has to
 /// be in range `[0..32]`.
@@ -231,8 +268,10 @@ fn as_u5(tag: u8) -> u5 {
 	u5::try_from_u8(tag).unwrap()
 }
 
-impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
-	pub fn new(currrency: Currency) -> InvoiceBuilder<tb::False, tb::False> {
+impl InvoiceBuilder<tb::False, tb::False> {
+	/// Construct new, empty `InvoiceBuilder`. All necessary fields have to be filled first before
+	/// `InvoiceBuilder::build(self)` becomes available.
+	pub fn new(currrency: Currency) -> Self {
 		InvoiceBuilder {
 			currency: currrency,
 			amount: None,
@@ -245,7 +284,10 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 			phantom_h: std::marker::PhantomData,
 		}
 	}
+}
 
+impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
+	/// Helper function to set the completeness flags.
 	fn set_flags<DN: tb::Bool, HN: tb::Bool>(self) -> InvoiceBuilder<DN, HN> {
 		InvoiceBuilder::<DN, HN> {
 			currency: self.currency,
@@ -260,6 +302,7 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 		}
 	}
 
+	/// Sets the amount in pico BTC.
 	pub fn amount_pico_btc(mut self, amount: u64) -> Self {
 		// TODO: calculate optimal SI prefix
 		self.amount = Some(amount);
@@ -267,42 +310,51 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 		self
 	}
 
+	/// Sets the amount as a combination of a SI prefix and a multiplier. This function won't change
+	/// the SI prefix even if there is a more optimal one.
 	pub fn amount_si(mut self, amount: u64, si_prefix: SiPrefix) -> Self {
 		self.amount = Some(amount);
 		self.si_prefix = Some(si_prefix);
 		self
 	}
 
+	/// Sets the timestamp. `time` is a UNIX timestamp.
 	pub fn timestamp(mut self, time: u64) -> Self {
 		self.timestamp = Some(time);
 		self
 	}
 
+	/// Sets the payee's public key.
 	pub fn payee_pub_key(mut self, pub_key: PublicKey) -> Self {
 		self.tagged_fields.push(TaggedField::PayeePubKey(PayeePubKey(pub_key)));
 		self
 	}
 
+	/// Sets the expiry time in seconds.
 	pub fn expiry_time_seconds(mut self, expiry_seconds: u64) -> Self {
 		self.tagged_fields.push(TaggedField::ExpiryTime(ExpiryTime {seconds: expiry_seconds}));
 		self
 	}
 
+	/// Sets `min_final_cltv_expiry`.
 	pub fn min_final_cltv_expiry(mut self, min_final_cltv_expiry: u64) -> Self {
 		self.tagged_fields.push(TaggedField::MinFinalCltvExpiry(MinFinalCltvExpiry(min_final_cltv_expiry)));
 		self
 	}
 
+	/// Adds a fallback address.
 	pub fn fallback(mut self, fallback: Fallback) -> Self {
 		self.tagged_fields.push(TaggedField::Fallback(fallback));
 		self
 	}
 
+	/// Adds a private route.
 	pub fn route(mut self, route: Route) -> Self {
 		self.tagged_fields.push(TaggedField::Route(route));
 		self
 	}
 
+	/// Builds a `RawInvoice` if no `CreationError` occurred while construction any of the fields.
 	pub fn build_raw(self) -> Result<RawInvoice, CreationError> {
 		use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -341,6 +393,7 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 }
 
 impl<H: tb::Bool> InvoiceBuilder<tb::False, H> {
+	/// Set the description. This function is only available if no description (hash) was set.
 	pub fn description(mut self, description: String) -> InvoiceBuilder<tb::True, H> {
 		match Description::new(description) {
 			Ok(d) => self.tagged_fields.push(TaggedField::Description(d)),
@@ -349,6 +402,7 @@ impl<H: tb::Bool> InvoiceBuilder<tb::False, H> {
 		self.set_flags()
 	}
 
+	/// Set the description hash. This function is only available if no description (hash) was set.
 	pub fn description_hash(mut self, description_hash: [u8; 32]) -> InvoiceBuilder<tb::True, H> {
 		self.tagged_fields.push(TaggedField::DescriptionHash(Sha256(description_hash)));
 		self.set_flags()
@@ -356,6 +410,7 @@ impl<H: tb::Bool> InvoiceBuilder<tb::False, H> {
 }
 
 impl<D: tb::Bool> InvoiceBuilder<D, tb::False> {
+	/// Set the payment hash. This function is only available if no payment hash was set.
 	pub fn payment_hash(mut self, hash: [u8; 32]) -> InvoiceBuilder<D, tb::True> {
 		self.tagged_fields.push(TaggedField::PaymentHash(Sha256(hash)));
 		self.set_flags()
@@ -363,6 +418,9 @@ impl<D: tb::Bool> InvoiceBuilder<D, tb::False> {
 }
 
 impl InvoiceBuilder<tb::True, tb::True> {
+	/// Builds and signs an invoice using the supplied `sign_function`. This function MAY NOT fail
+	/// and MUST produce a recoverable signature valid for the given hash and if applicable also for
+	/// the included payee public key.
 	pub fn build_signed<F>(self, sign_function: F) -> Result<Invoice, CreationError>
 		where F: FnOnce(&Message) -> RecoverableSignature
 	{
@@ -377,6 +435,9 @@ impl InvoiceBuilder<tb::True, tb::True> {
 		}
 	}
 
+	/// Builds and signs an invoice using the supplied `sign_function`. This function MAY fail with
+	/// an error of type `E` and MUST produce a recoverable signature valid for the given hash and
+	/// if applicable also for the included payee public key.
 	pub fn try_build_signed<F, E>(self, sign_function: F) -> Result<Invoice, SignOrCreationError<E>>
 		where F: FnOnce(&Message) -> Result<RecoverableSignature, E>
 	{
@@ -402,7 +463,7 @@ impl InvoiceBuilder<tb::True, tb::True> {
 
 
 impl SignedRawInvoice {
-	/// Disassembles the `SignedRawInvoice` into it's three parts:
+	/// Disassembles the `SignedRawInvoice` into its three parts:
 	///  1. raw invoice
 	///  2. hash of the raw invoice
 	///  3. signature
@@ -410,18 +471,22 @@ impl SignedRawInvoice {
 		(self.raw_invoice, self.hash, self.signature)
 	}
 
+	/// The `RawInvoice` which was signed.
 	pub fn raw_invoice(&self) -> &RawInvoice {
 		&self.raw_invoice
 	}
 
+	/// The hash of the `RawInvoice` that was signed.
 	pub fn hash(&self) -> &[u8; 32] {
 		&self.hash
 	}
 
+	/// Signature for the invoice.
 	pub fn signature(&self) -> &Signature {
 		&self.signature
 	}
 
+	/// Recovers the public key used for signing the invoice from the recoverable signature.
 	pub fn recover_payee_pub_key(&self) -> Result<PayeePubKey, secp256k1::Error> {
 		let hash = Message::from_slice(&self.hash[..])
 			.expect("Hash is 32 bytes long, same as MESSAGE_SIZE");
@@ -432,6 +497,8 @@ impl SignedRawInvoice {
 		)?))
 	}
 
+	/// Checks if the signature is valid for the included payee public key or if none exists if it's
+	/// valid for the recovered signature (which should always be true?).
 	pub fn check_signature(&self) -> bool {
 		let included_pub_key = self.raw_invoice.payee_pub_key();
 
@@ -490,6 +557,7 @@ macro_rules! find_extract {
 }
 
 impl RawInvoice {
+	/// Hash the HRP as bytes and signatureless data part.
 	fn hash_from_parts(hrp_bytes: &[u8], data_without_signature: &[u5]) -> [u8; 32] {
 		use bech32::FromBase32;
 
@@ -515,6 +583,7 @@ impl RawInvoice {
 		hash
 	}
 
+	/// Calculate the hash of the encoded `RawInvoice`
 	pub fn hash(&self) -> [u8; 32] {
 		use bech32::ToBase32;
 
@@ -524,6 +593,9 @@ impl RawInvoice {
 		)
 	}
 
+	/// Signs the invoice using the supplied `sign_function`. This function MAY fail with an error
+	/// of type `E`. Since the signature of a `SignedRawInvoice` is not required to be valid there
+	/// are no constraints regarding the validity of the produced signature.
 	pub fn sign<F, E>(self, sign_method: F) -> Result<SignedRawInvoice, E>
 		where F: FnOnce(&Message) -> Result<RecoverableSignature, E>
 	{
@@ -539,6 +611,7 @@ impl RawInvoice {
 		})
 	}
 
+	/// Returns an iterator over all tagged fields with known semantics.
 	pub fn known_tagged_fields(&self)
 		-> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>>
 	{
@@ -638,6 +711,20 @@ impl Invoice {
 		Ok(())
 	}
 
+	/// Constructs an `Invoice` from a `SignedInvoice` by checking all its invariants.
+	/// ```
+	/// # extern crate lightning_invoice;
+	/// use lightning_invoice::*;
+	///
+	/// let invoice = "lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdp\
+	/// 	l2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq8rkx3yf5tcsyz3d7\
+	/// 	3gafnh3cax9rn449d9p5uxz9ezhhypd0elx87sjle52x86fux2ypatgddc6k63n7erqz25le42c4u4ec\
+	/// 	ky03ylcqca784w";
+	///
+	/// let signed = invoice.parse::<SignedRawInvoice>().unwrap();
+	///
+	/// assert!(Invoice::from_signed(signed).is_ok());
+	/// ```
 	pub fn from_signed(signed_invoice: SignedRawInvoice) -> Result<Self, SemanticError> {
 		let invoice = Invoice {
 			signed_invoice: signed_invoice,
@@ -648,6 +735,7 @@ impl Invoice {
 		Ok(invoice)
 	}
 
+	/// Returns an iterator over all tagged fields of this Invoice.
 	pub fn tagged_fields(&self)
 		-> FilterMap<Iter<RawTaggedField>, fn(&RawTaggedField) -> Option<&TaggedField>> {
 		self.signed_invoice.raw_invoice().known_tagged_fields()
@@ -698,6 +786,7 @@ impl From<TaggedField> for RawTaggedField {
 }
 
 impl TaggedField {
+	/// Numeric representation of the field's tag
 	pub fn tag(&self) -> u5 {
 		let tag = match *self {
 			TaggedField::PaymentHash(_) => constants::TAG_PAYMENT_HASH,

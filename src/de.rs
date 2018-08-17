@@ -199,6 +199,48 @@ impl FromStr for SiPrefix {
 	}
 }
 
+/// ```
+/// # extern crate lightning_invoice;
+/// use lightning_invoice::Invoice;
+///
+/// let invoice = "lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdp\
+/// 	l2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq8rkx3yf5tcsyz3d7\
+/// 	3gafnh3cax9rn449d9p5uxz9ezhhypd0elx87sjle52x86fux2ypatgddc6k63n7erqz25le42c4u4ec\
+/// 	ky03ylcqca784w";
+///
+/// assert!(invoice.parse::<Invoice>().is_ok());
+/// ```
+impl FromStr for Invoice {
+	type Err = ParseOrSemanticError;
+
+	fn from_str(s: &str) -> Result<Self, <Self as FromStr>::Err> {
+		let signed = s.parse::<SignedRawInvoice>()?;
+		Ok(Invoice::from_signed(signed)?)
+	}
+}
+
+/// ```
+/// # extern crate lightning_invoice;
+/// use lightning_invoice::*;
+///
+/// let invoice = "lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdp\
+/// 	l2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq8rkx3yf5tcsyz3d7\
+/// 	3gafnh3cax9rn449d9p5uxz9ezhhypd0elx87sjle52x86fux2ypatgddc6k63n7erqz25le42c4u4ec\
+/// 	ky03ylcqca784w";
+///
+/// let parsed_1 = invoice.parse::<Invoice>();
+///
+/// let parsed_2 = match invoice.parse::<SignedRawInvoice>() {
+/// 	Ok(signed) => match Invoice::from_signed(signed) {
+/// 		Ok(invoice) => Ok(invoice),
+/// 		Err(e) => Err(ParseOrSemanticError::SemanticError(e)),
+/// 	},
+/// 	Err(e) => Err(ParseOrSemanticError::ParseError(e)),
+/// };
+///
+/// assert!(parsed_1.is_ok());
+/// assert_eq!(parsed_1, parsed_2);
+/// ```
 impl FromStr for SignedRawInvoice {
 	type Err = ParseError;
 
@@ -544,6 +586,12 @@ pub enum ParseError {
 	Skip
 }
 
+#[derive(PartialEq, Debug)]
+pub enum ParseOrSemanticError {
+	ParseError(ParseError),
+	SemanticError(::SemanticError),
+}
+
 impl Display for ParseError {
 	fn fmt(&self, f: &mut Formatter) -> fmt::Result {
 		use self::ParseError::*;
@@ -621,6 +669,18 @@ impl From<bech32::Error> for ParseError {
 			bech32::Error::InvalidPadding => ParseError::PaddingError(e),
 			_ => ParseError::Bech32Error(e)
 		}
+	}
+}
+
+impl From<ParseError> for ParseOrSemanticError {
+	fn from(e: ParseError) -> Self {
+		ParseOrSemanticError::ParseError(e)
+	}
+}
+
+impl From<::SemanticError> for ParseOrSemanticError {
+	fn from(e: SemanticError) -> Self {
+		ParseOrSemanticError::SemanticError(e)
 	}
 }
 
