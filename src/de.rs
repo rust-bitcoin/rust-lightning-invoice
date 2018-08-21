@@ -283,7 +283,13 @@ impl FromStr for RawHrp {
 		let si_prefix: Option<SiPrefix> = if parts.2.is_empty() {
 			None
 		} else {
-			Some(parts.2.parse()?)
+			let si: SiPrefix = parts.2.parse()?;
+			if let Some(amt) = amount {
+				if amt.checked_mul(si.multiplier()).is_none() {
+					return Err(ParseError::IntegerOverflowError);
+				}
+			}
+			Some(si)
 		};
 
 		Ok(RawHrp {
