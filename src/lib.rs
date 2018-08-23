@@ -159,7 +159,20 @@ pub enum SiPrefix {
 	Pico,
 }
 
-#[derive(Eq, PartialEq, Debug)]
+impl SiPrefix {
+	/// Returns the multiplier to go from a BTC value to picoBTC implied by this SiPrefix.
+	/// This is effectively 10^12 * the prefix multiplier
+	pub fn multiplier(&self) -> u64 {
+		match self {
+			&SiPrefix::Milli => 1_000_000_000,
+			&SiPrefix::Micro => 1_000_000,
+			&SiPrefix::Nano => 1_000,
+			&SiPrefix::Pico => 1,
+		}
+	}
+}
+
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Currency {
 	Bitcoin,
 	BitcoinTestnet,
@@ -309,14 +322,6 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 		// TODO: calculate optimal SI prefix
 		self.amount = Some(amount);
 		self.si_prefix = None;
-		self
-	}
-
-	/// Sets the amount as a combination of a SI prefix and a multiplier. This function won't change
-	/// the SI prefix even if there is a more optimal one.
-	pub fn amount_si(mut self, amount: u64, si_prefix: SiPrefix) -> Self {
-		self.amount = Some(amount);
-		self.si_prefix = Some(si_prefix);
 		self
 	}
 
@@ -667,6 +672,16 @@ impl RawInvoice {
 			num_traits => None,
 		}).collect::<Vec<&Route>>()
 	}
+
+	pub fn amount_pico_btc(&self) -> Option<u64> {
+		self.hrp.raw_amount.map(|v| {
+			v * self.hrp.si_prefix.as_ref().map_or(1_000_000_000_000, |si| { si.multiplier() })
+		})
+	}
+
+	pub fn currency(&self) -> Currency {
+		self.hrp.currency.clone()
+	}
 }
 
 impl Invoice {
@@ -777,6 +792,14 @@ impl Invoice {
 
 	pub fn routes(&self) -> Vec<&Route> {
 		self.signed_invoice.routes()
+	}
+
+	pub fn currency(&self) -> Currency {
+		self.signed_invoice.currency()
+	}
+
+	pub fn amount_pico_btc(&self) -> Option<u64> {
+		self.signed_invoice.amount_pico_btc()
 	}
 }
 
