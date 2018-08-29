@@ -147,7 +147,7 @@ pub struct RawDataPart {
 }
 
 /// SI prefixes for the human readable part
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub enum SiPrefix {
 	/// 10^-3
 	Milli,
@@ -169,6 +169,14 @@ impl SiPrefix {
 			&SiPrefix::Nano => 1_000,
 			&SiPrefix::Pico => 1,
 		}
+	}
+
+	/// Returns all enum variants of `SiPrefix` sorted in descending order of their associated
+	/// multiplier.
+	pub fn values_desc() -> &'static [SiPrefix] {
+		use SiPrefix::*;
+		static VALUES: [SiPrefix; 4] = [Milli, Micro, Nano, Pico];
+		&VALUES
 	}
 }
 
@@ -317,11 +325,14 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 		}
 	}
 
-	/// Sets the amount in pico BTC.
+	/// Sets the amount in pico BTC. The optimal SI prefix is choosen automatically.
 	pub fn amount_pico_btc(mut self, amount: u64) -> Self {
-		// TODO: calculate optimal SI prefix
-		self.amount = Some(amount);
-		self.si_prefix = None;
+		let biggest_possible_si_prefix = SiPrefix::values_desc()
+			.iter()
+			.find(|prefix| amount % prefix.multiplier() == 0)
+			.expect("Pico should always match");
+		self.amount = Some(amount / biggest_possible_si_prefix.multiplier());
+		self.si_prefix = Some(*biggest_possible_si_prefix);
 		self
 	}
 
@@ -1055,5 +1066,31 @@ mod test {
 		}).unwrap();
 
 		assert!(new_signed.check_signature());
+	}
+
+	#[test]
+	fn test_builder_amount() {
+		use ::*;
+
+		let invoice = InvoiceBuilder::new(Currency::Bitcoin)
+			.description("Test".into())
+			.payment_hash([0;32])
+			.amount_pico_btc(15000)
+			.build_raw()
+			.unwrap();
+
+		assert_eq!(invoice.hrp.si_prefix, Some(SiPrefix::Nano));
+		assert_eq!(invoice.hrp.raw_amount, Some(15));
+
+
+		let invoice = InvoiceBuilder::new(Currency::Bitcoin)
+			.description("Test".into())
+			.payment_hash([0;32])
+			.amount_pico_btc(1500)
+			.build_raw()
+			.unwrap();
+
+		assert_eq!(invoice.hrp.si_prefix, Some(SiPrefix::Pico));
+		assert_eq!(invoice.hrp.raw_amount, Some(1500));
 	}
 }
