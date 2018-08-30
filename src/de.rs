@@ -568,7 +568,7 @@ impl FromBase32 for Route {
 	}
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum ParseError {
 	Bech32Error(bech32::Error),
 	ParseAmountError(ParseIntError),
@@ -590,7 +590,7 @@ pub enum ParseError {
 	Skip
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum ParseOrSemanticError {
 	ParseError(ParseError),
 	SemanticError(::SemanticError),

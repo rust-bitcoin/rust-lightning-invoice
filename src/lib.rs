@@ -59,6 +59,7 @@ pub use de::{ParseError, ParseOrSemanticError};
 /// given field:
 ///  * `D`: exactly one `Description` or `DescriptionHash`
 ///  * `H`: exactly one `PaymentHash`
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool> {
 	currency: Currency,
 	amount: Option<u64>,
@@ -77,11 +78,12 @@ pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool> {
 ///  1. using `InvoiceBuilder`
 ///  2. using `Invoice::from_signed(SignedRawInvoice)`
 ///  3. using `str::parse::<Invoice>(&str)`
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Invoice {
 	signed_invoice: SignedRawInvoice,
 }
 
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum InvoiceDescription<'f> {
 	Direct(&'f Description),
 	Hash(&'f Sha256)
@@ -92,7 +94,7 @@ pub enum InvoiceDescription<'f> {
 ///
 /// # Invariants
 /// The hash has to be either from the deserialized invoice or from the serialized `raw_invoice`.
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct SignedRawInvoice {
 	/// The rawInvoice that the signature belongs to
 	raw_invoice: RawInvoice,
@@ -113,7 +115,7 @@ pub struct SignedRawInvoice {
 /// Represents an syntactically correct Invoice for a payment on the lightning network,
 /// but without the signature information.
 /// De- and encoding should not lead to information loss but may lead to different hashes.
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RawInvoice {
 	/// human readable part
 	pub hrp: RawHrp,
@@ -123,7 +125,7 @@ pub struct RawInvoice {
 }
 
 /// Data of the `RawInvoice` that is encoded in the human readable part
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RawHrp {
 	/// The currency deferred from the 3rd and 4th character of the bech32 transaction
 	pub currency: Currency,
@@ -136,7 +138,7 @@ pub struct RawHrp {
 }
 
 /// Data of the `RawInvoice` that is encoded in the data part
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RawDataPart {
 	// TODO: find better fitting type that only allows positive timestamps to avoid checks for negative timestamps when encoding
 	/// generation time of the invoice as UNIX timestamp
@@ -187,7 +189,7 @@ pub enum Currency {
 }
 
 /// Tagged field which may have an unknown tag
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum RawTaggedField {
 	/// Parsed tagged field with known tag
 	KnownSemantics(TaggedField),
@@ -196,7 +198,7 @@ pub enum RawTaggedField {
 }
 
 /// Tagged field with known tag
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum TaggedField {
 	PaymentHash(Sha256),
 	Description(Description),
@@ -210,33 +212,33 @@ pub enum TaggedField {
 
 // TODO: use struct from bitcoin_hashes
 /// SHA-256 hash
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Sha256(pub [u8; 32]);
 
 /// Description string
 ///
 /// # Invariants
 /// The description can be at most 639 __bytes__ long
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Description(String);
 
 /// Payee public key
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct PayeePubKey(pub PublicKey);
 
 /// Positive duration that defines when (relatively to the timestamp) in the future the invoice expires
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct ExpiryTime {
 	pub seconds: u64
 }
 
 /// `min_final_cltv_expiry` to use for the last HTLC in the route
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct MinFinalCltvExpiry(pub u64);
 
 // TODO: better types instead onf byte arrays
 /// Fallback address in case no LN payment is possible
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Fallback {
 	SegWitProgram {
 		version: u5,
@@ -247,7 +249,7 @@ pub enum Fallback {
 }
 
 /// Recoverable signature
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Signature(pub RecoverableSignature);
 
 /// Private routing information
@@ -255,10 +257,10 @@ pub struct Signature(pub RecoverableSignature);
 /// # Invariants
 /// The encoded route has to be <1024 5bit characters long (<=639 bytes or <=12 hops)
 ///
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Route(Vec<RouteHop>);
 
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RouteHop {
 	pub pubkey: PublicKey,
 	pub short_channel_id: [u8; 8],
@@ -930,7 +932,7 @@ impl Deref for SignedRawInvoice {
 }
 
 /// Errors that may occur when constructing a new `RawInvoice` or `Invoice`
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum CreationError {
 	/// The supplied description string was longer than 639 __bytes__ (see [`Description::new(…)`](./struct.Description.html#method.new))
 	DescriptionTooLong,
@@ -941,7 +943,7 @@ pub enum CreationError {
 
 /// Errors that may occur when converting a `RawInvoice` to an `Invoice`. They relate to the
 /// requirements sections in BOLT #11
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum SemanticError {
 	NoPaymentHash,
 	MultiplePaymentHashes,
@@ -955,6 +957,7 @@ pub enum SemanticError {
 
 /// When signing using a fallible method either an user-supplied `SignError` or a `CreationError`
 /// may occur.
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum SignOrCreationError<S> {
 	SignError(S),
 	CreationError(CreationError),
