@@ -375,10 +375,11 @@ impl<D: tb::Bool, H: tb::Bool, T: tb::Bool> InvoiceBuilder<D, H, T> {
 		}
 		self
 	}
+}
 
+impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H, tb::True> {
 	/// Builds a `RawInvoice` if no `CreationError` occurred while construction any of the fields.
 	pub fn build_raw(self) -> Result<RawInvoice, CreationError> {
-		use std::time::{SystemTime, UNIX_EPOCH};
 
 		// If an error occurred at any time before, return it now
 		if let Some(e) = self.error {
@@ -391,12 +392,7 @@ impl<D: tb::Bool, H: tb::Bool, T: tb::Bool> InvoiceBuilder<D, H, T> {
 			si_prefix: self.si_prefix,
 		};
 
-		let timestamp = self.timestamp.unwrap_or_else(|| {
-			let now = SystemTime::now();
-			let since_unix_epoch = now.duration_since(UNIX_EPOCH)
-				.expect("it won't be 1970 ever again");
-			since_unix_epoch.as_secs() as u64
-		});
+		let timestamp = self.timestamp.expect("ensured to be Some(t) by type T");
 
 		let tagged_fields = self.tagged_fields.into_iter().map(|tf| {
 			RawTaggedField::KnownSemantics(tf)
@@ -1104,7 +1100,8 @@ mod test {
 
 		let builder = InvoiceBuilder::new(Currency::Bitcoin)
 			.description("Test".into())
-			.payment_hash([0;32]);
+			.payment_hash([0;32])
+			.current_timestamp();
 
 		let invoice = builder.clone()
 			.amount_pico_btc(15000)
@@ -1132,7 +1129,8 @@ mod test {
 		use secp256k1::Secp256k1;
 
 		let builder = InvoiceBuilder::new(Currency::Bitcoin)
-			.payment_hash([0;32]);
+			.payment_hash([0;32])
+			.current_timestamp();
 
 		let too_long_string = String::from_iter(
 			(0..1024).map(|_| '?')
@@ -1166,7 +1164,6 @@ mod test {
 
 		let sign_error_res = builder.clone()
 			.description("Test".into())
-			.current_timestamp()
 			.try_build_signed(|_| {
 				Err("ImaginaryError")
 			});
