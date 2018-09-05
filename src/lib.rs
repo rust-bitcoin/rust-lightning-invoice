@@ -369,8 +369,11 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 	}
 
 	/// Adds a private route.
-	pub fn route(mut self, route: Route) -> Self {
-		self.tagged_fields.push(TaggedField::Route(route));
+	pub fn route(mut self, route: Vec<RouteHop>) -> Self {
+		match Route::new(route) {
+			Ok(r) => self.tagged_fields.push(TaggedField::Route(r)),
+			Err(e) => self.error = Some(e),
+		}
 		self
 	}
 
@@ -698,6 +701,10 @@ impl RawInvoice {
 }
 
 impl Invoice {
+	fn into_signed_raw(self) -> SignedRawInvoice {
+		self.signed_invoice
+	}
+
 	/// Check that all mandatory fields are present
 	fn check_field_counts(&self) -> Result<(), SemanticError> {
 		// "A writer MUST include exactly one p field […]."
@@ -762,6 +769,10 @@ impl Invoice {
 		invoice.check_signature()?;
 
 		Ok(invoice)
+	}
+
+	pub fn timestamp(&self) -> u64 {
+		self.signed_invoice.raw_invoice.data.timestamp
 	}
 
 	/// Returns an iterator over all tagged fields of this Invoice.
@@ -1075,9 +1086,11 @@ mod test {
 	fn test_builder_amount() {
 		use ::*;
 
-		let invoice = InvoiceBuilder::new(Currency::Bitcoin)
+		let builder = InvoiceBuilder::new(Currency::Bitcoin)
 			.description("Test".into())
-			.payment_hash([0;32])
+			.payment_hash([0;32]);
+
+		let invoice = builder.clone()
 			.amount_pico_btc(15000)
 			.build_raw()
 			.unwrap();
@@ -1086,14 +1099,147 @@ mod test {
 		assert_eq!(invoice.hrp.raw_amount, Some(15));
 
 
-		let invoice = InvoiceBuilder::new(Currency::Bitcoin)
-			.description("Test".into())
-			.payment_hash([0;32])
+		let invoice = builder.clone()
 			.amount_pico_btc(1500)
 			.build_raw()
 			.unwrap();
 
 		assert_eq!(invoice.hrp.si_prefix, Some(SiPrefix::Pico));
 		assert_eq!(invoice.hrp.raw_amount, Some(1500));
+	}
+
+	#[test]
+	fn test_builder_fail() {
+		use ::*;
+		use std::iter::FromIterator;
+		use secp256k1::key::PublicKey;
+		use secp256k1::Secp256k1;
+
+		let builder = InvoiceBuilder::new(Currency::Bitcoin)
+			.payment_hash([0;32]);
+
+		let too_long_string = String::from_iter(
+			(0..1024).map(|_| '?')
+		);
+
+		let long_desc_res = builder.clone()
+			.description(too_long_string)
+			.build_raw();
+		assert_eq!(long_desc_res, Err(CreationError::DescriptionTooLong));
+
+		let route_hop = RouteHop {
+			pubkey: PublicKey::from_slice(
+					&Secp256k1::without_caps(),
+					&[
+						0x03, 0x9e, 0x03, 0xa9, 0x01, 0xb8, 0x55, 0x34, 0xff, 0x1e, 0x92, 0xc4,
+						0x3c, 0x74, 0x43, 0x1f, 0x7c, 0xe7, 0x20, 0x46, 0x06, 0x0f, 0xcf, 0x7a,
+						0x95, 0xc3, 0x7e, 0x14, 0x8f, 0x78, 0xc7, 0x72, 0x55
+					][..]
+				).unwrap(),
+			short_channel_id: [0; 8],
+			fee_base_msat: 0,
+			fee_proportional_millionths: 0,
+			cltv_expiry_delta: 0,
+		};
+		let too_long_route = vec![route_hop; 13];
+		let long_route_res = builder.clone()
+			.description("Test".into())
+			.route(too_long_route)
+			.build_raw();
+		assert_eq!(long_route_res, Err(CreationError::RouteTooLong));
+
+		let sign_error_res = builder.clone()
+			.description("Test".into())
+			.try_build_signed(|_| {
+				Err("ImaginaryError")
+			});
+		assert_eq!(sign_error_res, Err(SignOrCreationError::SignError("ImaginaryError")));
+	}
+
+	#[test]
+	fn test_builder_ok() {
+		use ::*;
+		use secp256k1::Secp256k1;
+		use secp256k1::key::{SecretKey, PublicKey};
+
+		let secp_ctx = Secp256k1::new();
+
+		let private_key = SecretKey::from_slice(
+			&secp_ctx,
+			&[
+				0xe1, 0x26, 0xf6, 0x8f, 0x7e, 0xaf, 0xcc, 0x8b, 0x74, 0xf5, 0x4d, 0x26, 0x9f, 0xe2,
+				0x06, 0xbe, 0x71, 0x50, 0x00, 0xf9, 0x4d, 0xac, 0x06, 0x7d, 0x1c, 0x04, 0xa8, 0xca,
+				0x3b, 0x2d, 0xb7, 0x34
+			][..]
+		).unwrap();
+		let public_key = PublicKey::from_secret_key(&secp_ctx, &private_key);
+
+		let route_1 = vec![
+			RouteHop {
+				pubkey: public_key.clone(),
+				short_channel_id: [123; 8],
+				fee_base_msat: 2,
+				fee_proportional_millionths: 1,
+				cltv_expiry_delta: 145,
+			},
+			RouteHop {
+				pubkey: public_key.clone(),
+				short_channel_id: [42; 8],
+				fee_base_msat: 3,
+				fee_proportional_millionths: 2,
+				cltv_expiry_delta: 146,
+			}
+		];
+
+		let route_2 = vec![
+			RouteHop {
+				pubkey: public_key.clone(),
+				short_channel_id: [0; 8],
+				fee_base_msat: 4,
+				fee_proportional_millionths: 3,
+				cltv_expiry_delta: 147,
+			},
+			RouteHop {
+				pubkey: public_key.clone(),
+				short_channel_id: [1; 8],
+				fee_base_msat: 5,
+				fee_proportional_millionths: 4,
+				cltv_expiry_delta: 148,
+			}
+		];
+
+		let builder = InvoiceBuilder::new(Currency::BitcoinTestnet)
+			.amount_pico_btc(123)
+			.timestamp(1234567)
+			.payee_pub_key(public_key.clone())
+			.expiry_time_seconds(54321)
+			.min_final_cltv_expiry(144)
+			.min_final_cltv_expiry(143)
+			.fallback(Fallback::PubKeyHash([0;20]))
+			.route(route_1.clone())
+			.route(route_2.clone())
+			.description_hash([3;32])
+			.payment_hash([21;32]);
+
+		let invoice = builder.clone().build_signed(|hash| {
+			secp_ctx.sign_recoverable(hash, &private_key)
+		}).unwrap();
+
+		assert!(invoice.check_signature().is_ok());
+		assert_eq!(invoice.tagged_fields().count(), 9);
+
+		assert_eq!(invoice.amount_pico_btc(), Some(123));
+		assert_eq!(invoice.currency(), Currency::BitcoinTestnet);
+		assert_eq!(invoice.timestamp(), 1234567);
+		assert_eq!(invoice.payee_pub_key(), Some(&PayeePubKey(public_key)));
+		assert_eq!(invoice.expiry_time(), Some(&ExpiryTime{seconds: 54321}));
+		assert_eq!(invoice.min_final_cltv_expiry(), Some(&MinFinalCltvExpiry(144)));
+		assert_eq!(invoice.fallbacks(), vec![&Fallback::PubKeyHash([0;20])]);
+		assert_eq!(invoice.routes(), vec![&Route(route_1), &Route(route_2)]);
+		assert_eq!(invoice.description(), InvoiceDescription::Hash(&Sha256([3;32])));
+		assert_eq!(invoice.payment_hash(), &Sha256([21;32]));
+
+		let raw_invoice = builder.build_raw().unwrap();
+		assert_eq!(raw_invoice, *invoice.into_signed_raw().raw_invoice())
 	}
 }
