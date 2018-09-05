@@ -45,6 +45,7 @@ pub use de::{ParseError, ParseOrSemanticError};
 /// let invoice = InvoiceBuilder::new(Currency::Bitcoin)
 /// 	.description("Coins pls!".into())
 /// 	.payment_hash([0u8; 32])
+/// 	.current_timestamp()
 /// 	.build_signed(|hash| {
 /// 		Secp256k1::new().sign_recoverable(hash, &private_key)
 /// 	})
@@ -59,8 +60,9 @@ pub use de::{ParseError, ParseOrSemanticError};
 /// given field:
 ///  * `D`: exactly one `Description` or `DescriptionHash`
 ///  * `H`: exactly one `PaymentHash`
+///  * `T`: the timestamp is set
 #[derive(Eq, PartialEq, Debug, Clone)]
-pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool> {
+pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool, T: tb::Bool> {
 	currency: Currency,
 	amount: Option<u64>,
 	si_prefix: Option<SiPrefix>,
@@ -70,6 +72,7 @@ pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool> {
 
 	phantom_d: std::marker::PhantomData<D>,
 	phantom_h: std::marker::PhantomData<H>,
+	phantom_t: std::marker::PhantomData<T>,
 }
 
 /// Represents a syntactically and semantically correct lightning BOLT11 invoice.
@@ -293,7 +296,7 @@ fn as_u5(tag: u8) -> u5 {
 	u5::try_from_u8(tag).unwrap()
 }
 
-impl InvoiceBuilder<tb::False, tb::False> {
+impl InvoiceBuilder<tb::False, tb::False, tb::False> {
 	/// Construct new, empty `InvoiceBuilder`. All necessary fields have to be filled first before
 	/// `InvoiceBuilder::build(self)` becomes available.
 	pub fn new(currrency: Currency) -> Self {
@@ -307,14 +310,15 @@ impl InvoiceBuilder<tb::False, tb::False> {
 
 			phantom_d: std::marker::PhantomData,
 			phantom_h: std::marker::PhantomData,
+			phantom_t: std::marker::PhantomData,
 		}
 	}
 }
 
-impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
+impl<D: tb::Bool, H: tb::Bool, T: tb::Bool> InvoiceBuilder<D, H, T> {
 	/// Helper function to set the completeness flags.
-	fn set_flags<DN: tb::Bool, HN: tb::Bool>(self) -> InvoiceBuilder<DN, HN> {
-		InvoiceBuilder::<DN, HN> {
+	fn set_flags<DN: tb::Bool, HN: tb::Bool, TN: tb::Bool>(self) -> InvoiceBuilder<DN, HN, TN> {
+		InvoiceBuilder::<DN, HN, TN> {
 			currency: self.currency,
 			amount: self.amount,
 			si_prefix: self.si_prefix,
@@ -324,6 +328,7 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 
 			phantom_d: std::marker::PhantomData,
 			phantom_h: std::marker::PhantomData,
+			phantom_t: std::marker::PhantomData,
 		}
 	}
 
@@ -335,12 +340,6 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 			.expect("Pico should always match");
 		self.amount = Some(amount / biggest_possible_si_prefix.multiplier());
 		self.si_prefix = Some(*biggest_possible_si_prefix);
-		self
-	}
-
-	/// Sets the timestamp. `time` is a UNIX timestamp.
-	pub fn timestamp(mut self, time: u64) -> Self {
-		self.timestamp = Some(time);
 		self
 	}
 
@@ -415,9 +414,9 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H> {
 	}
 }
 
-impl<H: tb::Bool> InvoiceBuilder<tb::False, H> {
+impl<H: tb::Bool, T: tb::Bool> InvoiceBuilder<tb::False, H, T> {
 	/// Set the description. This function is only available if no description (hash) was set.
-	pub fn description(mut self, description: String) -> InvoiceBuilder<tb::True, H> {
+	pub fn description(mut self, description: String) -> InvoiceBuilder<tb::True, H, T> {
 		match Description::new(description) {
 			Ok(d) => self.tagged_fields.push(TaggedField::Description(d)),
 			Err(e) => self.error = Some(e),
@@ -426,21 +425,38 @@ impl<H: tb::Bool> InvoiceBuilder<tb::False, H> {
 	}
 
 	/// Set the description hash. This function is only available if no description (hash) was set.
-	pub fn description_hash(mut self, description_hash: [u8; 32]) -> InvoiceBuilder<tb::True, H> {
+	pub fn description_hash(mut self, description_hash: [u8; 32]) -> InvoiceBuilder<tb::True, H, T> {
 		self.tagged_fields.push(TaggedField::DescriptionHash(Sha256(description_hash)));
 		self.set_flags()
 	}
 }
 
-impl<D: tb::Bool> InvoiceBuilder<D, tb::False> {
+impl<D: tb::Bool, T: tb::Bool> InvoiceBuilder<D, tb::False, T> {
 	/// Set the payment hash. This function is only available if no payment hash was set.
-	pub fn payment_hash(mut self, hash: [u8; 32]) -> InvoiceBuilder<D, tb::True> {
+	pub fn payment_hash(mut self, hash: [u8; 32]) -> InvoiceBuilder<D, tb::True, T> {
 		self.tagged_fields.push(TaggedField::PaymentHash(Sha256(hash)));
 		self.set_flags()
 	}
 }
 
-impl InvoiceBuilder<tb::True, tb::True> {
+impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H, tb::False> {
+	/// Sets the timestamp. `time` is a UNIX timestamp.
+	pub fn timestamp(mut self, time: u64) -> InvoiceBuilder<D, H, tb::True> {
+		self.timestamp = Some(time);
+		self.set_flags()
+	}
+
+	/// Sets the timestamp to the current UNIX timestamp.
+	pub fn current_timestamp(mut self) -> InvoiceBuilder<D, H, tb::True> {
+		use std::time::{SystemTime, UNIX_EPOCH};
+		let now = SystemTime::now();
+		let since_unix_epoch = now.duration_since(UNIX_EPOCH).expect("it won't be 1970 ever again");
+		self.timestamp = Some(since_unix_epoch.as_secs() as u64);
+		self.set_flags()
+	}
+}
+
+impl InvoiceBuilder<tb::True, tb::True, tb::True> {
 	/// Builds and signs an invoice using the supplied `sign_function`. This function MAY NOT fail
 	/// and MUST produce a recoverable signature valid for the given hash and if applicable also for
 	/// the included payee public key.
@@ -1150,6 +1166,7 @@ mod test {
 
 		let sign_error_res = builder.clone()
 			.description("Test".into())
+			.current_timestamp()
 			.try_build_signed(|_| {
 				Err("ImaginaryError")
 			});
