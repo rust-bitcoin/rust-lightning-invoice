@@ -266,7 +266,6 @@ impl ToBase32<Vec<u5>> for TaggedField {
 		assert!(data.len() < 1024, "Every tagged field data can be at most 1023 bytes long.");
 
 		let mut sized_data = Vec::<u5>::with_capacity(data.len() + 3);
-		// TODO: think about saving tag constants as u5c
 		sized_data.push(u5::try_from_u8(tag).expect("Tags should be <32."));
 		sized_data.extend_from_slice(
 			&try_stretch(
