@@ -8,6 +8,9 @@ use std::str::FromStr;
 use bech32;
 use bech32::{Bech32, u5, FromBase32};
 
+use bitcoin_hashes::Hash;
+use bitcoin_hashes::sha256::Sha256Hash;
+
 use num_traits::{CheckedAdd, CheckedMul};
 
 use secp256k1;
@@ -429,9 +432,8 @@ impl FromBase32 for Sha256 {
 			// "A reader MUST skip over […] a p, [or] h […] field that does not have data_length 52 […]."
 			Err(ParseError::Skip)
 		} else {
-			let mut hash: [u8; 32] = Default::default();
-			hash.copy_from_slice(&Vec::<u8>::from_base32(field_data)?);
-			Ok(Sha256(hash))
+			Ok(Sha256(Sha256Hash::from_slice(&Vec::<u8>::from_base32(field_data)?)
+				.expect("length was checked before (52 u5 -> 32 u8)")))
 		}
 	}
 }
@@ -694,6 +696,8 @@ mod test {
 	use secp256k1::{PublicKey, Secp256k1};
 	use bech32::u5;
 	use SignedRawInvoice;
+	use bitcoin_hashes::hex::FromHex;
+	use bitcoin_hashes::sha256::Sha256Hash;
 
 	const CHARSET_REV: [i8; 128] = [
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -742,11 +746,9 @@ mod test {
 			"qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypq".as_bytes()
 		);
 
-		let hash = [
-			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01, 0x02, 0x03,
-			0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-			0x08, 0x09, 0x01, 0x02
-		];
+		let hash = Sha256Hash::from_hex(
+			"0001020304050607080900010203040506070809000102030405060708090102"
+		).unwrap();
 		let expected = Ok(Sha256(hash));
 
 		assert_eq!(Sha256::from_base32(&input), expected);
@@ -903,11 +905,9 @@ mod test {
 					data: RawDataPart {
 					timestamp: 1496314658,
 					tagged_fields: vec ! [
-						PaymentHash(Sha256([
-							0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
-							0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
-							0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
-						])).into(),
+						PaymentHash(Sha256(Sha256Hash::from_hex(
+							"0001020304050607080900010203040506070809000102030405060708090102"
+						).unwrap())).into(),
 						Description(
 							::Description::new(
 								"Please consider supporting this project".to_owned()

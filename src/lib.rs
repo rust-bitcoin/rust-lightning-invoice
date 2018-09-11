@@ -26,6 +26,10 @@ pub use de::{ParseError, ParseOrSemanticError};
 /// ```
 /// extern crate secp256k1;
 /// extern crate lightning_invoice;
+/// extern crate bitcoin_hashes;
+///
+/// use bitcoin_hashes::Hash;
+/// use bitcoin_hashes::sha256::Sha256Hash;
 ///
 /// use secp256k1::Secp256k1;
 /// use secp256k1::key::SecretKey;
@@ -42,9 +46,11 @@ pub use de::{ParseError, ParseOrSemanticError};
 /// 	][..]
 ///	).unwrap();
 ///
+/// let payment_hash = Sha256Hash::from_slice(&[0; 32][..]).unwrap();
+///
 /// let invoice = InvoiceBuilder::new(Currency::Bitcoin)
 /// 	.description("Coins pls!".into())
-/// 	.payment_hash([0u8; 32])
+/// 	.payment_hash(payment_hash)
 /// 	.current_timestamp()
 /// 	.build_signed(|hash| {
 /// 		Secp256k1::new().sign_recoverable(hash, &private_key)
@@ -213,10 +219,9 @@ pub enum TaggedField {
 	Route(Route),
 }
 
-// TODO: use struct from bitcoin_hashes
 /// SHA-256 hash
 #[derive(Eq, PartialEq, Debug, Clone)]
-pub struct Sha256(pub [u8; 32]);
+pub struct Sha256(pub Sha256Hash);
 
 /// Description string
 ///
@@ -421,7 +426,7 @@ impl<H: tb::Bool, T: tb::Bool> InvoiceBuilder<tb::False, H, T> {
 	}
 
 	/// Set the description hash. This function is only available if no description (hash) was set.
-	pub fn description_hash(mut self, description_hash: [u8; 32]) -> InvoiceBuilder<tb::True, H, T> {
+	pub fn description_hash(mut self, description_hash: Sha256Hash) -> InvoiceBuilder<tb::True, H, T> {
 		self.tagged_fields.push(TaggedField::DescriptionHash(Sha256(description_hash)));
 		self.set_flags()
 	}
@@ -429,7 +434,7 @@ impl<H: tb::Bool, T: tb::Bool> InvoiceBuilder<tb::False, H, T> {
 
 impl<D: tb::Bool, T: tb::Bool> InvoiceBuilder<D, tb::False, T> {
 	/// Set the payment hash. This function is only available if no payment hash was set.
-	pub fn payment_hash(mut self, hash: [u8; 32]) -> InvoiceBuilder<D, tb::True, T> {
+	pub fn payment_hash(mut self, hash: Sha256Hash) -> InvoiceBuilder<D, tb::True, T> {
 		self.tagged_fields.push(TaggedField::PaymentHash(Sha256(hash)));
 		self.set_flags()
 	}
@@ -988,6 +993,9 @@ pub enum SignOrCreationError<S> {
 
 #[cfg(test)]
 mod test {
+	use bitcoin_hashes::Hash;
+	use bitcoin_hashes::hex::FromHex;
+	use bitcoin_hashes::sha256::Sha256Hash;
 
 	#[test]
 	fn test_calc_invoice_hash() {
@@ -1004,12 +1012,12 @@ mod test {
 			data: RawDataPart {
 				timestamp: 1496314658,
 				tagged_fields: vec![
-					PaymentHash(::Sha256([
-						0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
-						0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
-						0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
-					])).into(),
-					Description(::Description::new("Please consider supporting this project".to_owned()).unwrap()).into(),
+					PaymentHash(::Sha256(Sha256Hash::from_hex(
+						"0001020304050607080900010203040506070809000102030405060708090102"
+					).unwrap())).into(),
+					Description(::Description::new(
+						"Please consider supporting this project".to_owned()
+					).unwrap()).into(),
 				],
 			},
 		};
@@ -1040,11 +1048,9 @@ mod test {
 				data: RawDataPart {
 					timestamp: 1496314658,
 					tagged_fields: vec ! [
-						PaymentHash(Sha256([
-							0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00,
-							0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x01,
-							0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x01, 0x02
-						])).into(),
+						PaymentHash(Sha256(Sha256Hash::from_hex(
+							"0001020304050607080900010203040506070809000102030405060708090102"
+						).unwrap())).into(),
 						Description(
 							::Description::new(
 								"Please consider supporting this project".to_owned()
@@ -1100,7 +1106,7 @@ mod test {
 
 		let builder = InvoiceBuilder::new(Currency::Bitcoin)
 			.description("Test".into())
-			.payment_hash([0;32])
+			.payment_hash(Sha256Hash::from_slice(&[0;32][..]).unwrap())
 			.current_timestamp();
 
 		let invoice = builder.clone()
@@ -1129,7 +1135,7 @@ mod test {
 		use secp256k1::Secp256k1;
 
 		let builder = InvoiceBuilder::new(Currency::Bitcoin)
-			.payment_hash([0;32])
+			.payment_hash(Sha256Hash::from_slice(&[0;32][..]).unwrap())
 			.current_timestamp();
 
 		let too_long_string = String::from_iter(
@@ -1232,8 +1238,8 @@ mod test {
 			.fallback(Fallback::PubKeyHash([0;20]))
 			.route(route_1.clone())
 			.route(route_2.clone())
-			.description_hash([3;32])
-			.payment_hash([21;32]);
+			.description_hash(Sha256Hash::from_slice(&[3;32][..]).unwrap())
+			.payment_hash(Sha256Hash::from_slice(&[21;32][..]).unwrap());
 
 		let invoice = builder.clone().build_signed(|hash| {
 			secp_ctx.sign_recoverable(hash, &private_key)
@@ -1250,8 +1256,11 @@ mod test {
 		assert_eq!(invoice.min_final_cltv_expiry(), Some(&MinFinalCltvExpiry(144)));
 		assert_eq!(invoice.fallbacks(), vec![&Fallback::PubKeyHash([0;20])]);
 		assert_eq!(invoice.routes(), vec![&Route(route_1), &Route(route_2)]);
-		assert_eq!(invoice.description(), InvoiceDescription::Hash(&Sha256([3;32])));
-		assert_eq!(invoice.payment_hash(), &Sha256([21;32]));
+		assert_eq!(
+			invoice.description(),
+			InvoiceDescription::Hash(&Sha256(Sha256Hash::from_slice(&[3;32][..]).unwrap()))
+		);
+		assert_eq!(invoice.payment_hash(), &Sha256(Sha256Hash::from_slice(&[21;32][..]).unwrap()));
 
 		let raw_invoice = builder.build_raw().unwrap();
 		assert_eq!(raw_invoice, *invoice.into_signed_raw().raw_invoice())

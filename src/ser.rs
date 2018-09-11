@@ -145,7 +145,7 @@ impl ToBase32<Vec<u5>> for RawTaggedField {
 
 impl ToBase32<Vec<u5>> for Sha256 {
 	fn to_base32(&self) -> Vec<u5> {
-		self.0.to_base32()
+		(&self.0[..]).to_base32()
 	}
 }
 
