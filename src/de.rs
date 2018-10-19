@@ -582,7 +582,7 @@ pub enum ParseError {
 	TooShortDataPart,
 	UnexpectedEndOfTaggedFields,
 	DescriptionDecodeError(str::Utf8Error),
-	PaddingError(bech32::Error),
+	PaddingError,
 	IntegerOverflowError,
 	InvalidSegWitProgramLength,
 	InvalidPubKeyHashLength,
@@ -616,9 +616,6 @@ impl Display for ParseError {
 			DescriptionDecodeError(ref e) => {
 				write!(f, "{} ({})", self.description(), e)
 			}
-			PaddingError(ref e) => {
-				write!(f, "{} ({})", self.description(), e)
-			},
 			InvalidSliceLength(ref function) => {
 				write!(f, "{} (in function {})", self.description(), function)
 			}
@@ -643,7 +640,7 @@ impl error::Error for ParseError {
 			TooShortDataPart => "data part too short (should be at least 111 bech32 chars long)",
 			UnexpectedEndOfTaggedFields => "tagged fields part ended unexpectedly",
 			DescriptionDecodeError(_) => "description is no valid utf-8 string",
-			PaddingError(_) => "some data field had bad padding",
+			PaddingError => "some data field had bad padding",
 			IntegerOverflowError => "parsed integer doesn't fit into receiving type",
 			InvalidSegWitProgramLength => "fallback SegWit program is too long or too short",
 			InvalidPubKeyHashLength => "fallback public key hash has a length unequal 20 bytes",
@@ -672,7 +669,7 @@ from_error!(ParseError::DescriptionDecodeError, str::Utf8Error);
 impl From<bech32::Error> for ParseError {
 	fn from(e: bech32::Error) -> Self {
 		match e {
-			bech32::Error::InvalidPadding => ParseError::PaddingError(e),
+			bech32::Error::InvalidPadding => ParseError::PaddingError,
 			_ => ParseError::Bech32Error(e)
 		}
 	}
