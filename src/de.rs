@@ -729,10 +729,9 @@ mod test {
 
 		assert_eq!(parse_int_be::<u32, u8>(&[1, 2, 3, 4], 256), Some(16909060));
 		assert_eq!(parse_int_be::<u32, u8>(&[1, 3], 32), Some(35));
-		assert_eq!(parse_int_be::<u32, u8>(&[1, 2, 3, 4, 5], 256), None);
+		assert_eq!(parse_int_be::<u32, u8>(&[255, 255, 255, 255], 256), Some(4294967295));
+		assert_eq!(parse_int_be::<u32, u8>(&[1, 0, 0, 0, 0], 256), None);
 	}
-
-	//TODO: test error conditions
 
 	#[test]
 	fn test_parse_sha256_hash() {
@@ -749,6 +748,12 @@ mod test {
 		let expected = Ok(Sha256(hash));
 
 		assert_eq!(Sha256::from_base32(&input), expected);
+
+		// make sure hashes of unknown length get skipped
+		let input_unexpected_length = from_bech32(
+			"qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypyq".as_bytes()
+		);
+		assert_eq!(Sha256::from_base32(&input_unexpected_length), Err(ParseError::Skip));
 	}
 
 	#[test]
@@ -777,6 +782,12 @@ mod test {
 		));
 
 		assert_eq!(PayeePubKey::from_base32(&input), expected);
+
+		// expects 33 bytes
+		let input_unexpected_length = from_bech32(
+			"q0n326hr8v9zprg8gsvezcch06gfaqqhde2aj730yg0durunfhvq".as_bytes()
+		);
+		assert_eq!(PayeePubKey::from_base32(&input_unexpected_length), Err(ParseError::Skip));
 	}
 
 	#[test]
@@ -786,8 +797,10 @@ mod test {
 
 		let input = from_bech32("pu".as_bytes());
 		let expected = Ok(ExpiryTime{seconds: 60});
-
 		assert_eq!(ExpiryTime::from_base32(&input), expected);
+
+		let input_too_large = from_bech32("sqqqqqqqqqqqq".as_bytes());
+		assert_eq!(ExpiryTime::from_base32(&input_too_large), Err(ParseError::IntegerOverflowError));
 	}
 
 	#[test]
@@ -809,32 +822,52 @@ mod test {
 		let cases = vec![
 			(
 				from_bech32("3x9et2e20v6pu37c5d9vax37wxq72un98".as_bytes()),
-				Fallback::PubKeyHash([
+				Ok(Fallback::PubKeyHash([
 					0x31, 0x72, 0xb5, 0x65, 0x4f, 0x66, 0x83, 0xc8, 0xfb, 0x14, 0x69, 0x59, 0xd3,
 					0x47, 0xce, 0x30, 0x3c, 0xae, 0x4c, 0xa7
-				])
+				]))
 			),
 			(
 				from_bech32("j3a24vwu6r8ejrss3axul8rxldph2q7z9".as_bytes()),
-				Fallback::ScriptHash([
+				Ok(Fallback::ScriptHash([
 					0x8f, 0x55, 0x56, 0x3b, 0x9a, 0x19, 0xf3, 0x21, 0xc2, 0x11, 0xe9, 0xb9, 0xf3,
 					0x8c, 0xdf, 0x68, 0x6e, 0xa0, 0x78, 0x45
-				])
+				]))
 			),
 			(
 				from_bech32("qw508d6qejxtdg4y5r3zarvary0c5xw7k".as_bytes()),
-				Fallback::SegWitProgram {
+				Ok(Fallback::SegWitProgram {
 					version: u5::try_from_u8(0).unwrap(),
 					program: Vec::from(&[
 						0x75u8, 0x1e, 0x76, 0xe8, 0x19, 0x91, 0x96, 0xd4, 0x54, 0x94, 0x1c, 0x45,
 						0xd1, 0xb3, 0xa3, 0x23, 0xf1, 0x43, 0x3b, 0xd6
 					][..])
-				}
+				})
+			),
+			(
+				vec![u5::try_from_u8(21).unwrap(); 41],
+				Err(ParseError::Skip)
+			),
+			(
+				vec![],
+				Err(ParseError::UnexpectedEndOfTaggedFields)
+			),
+			(
+				vec![u5::try_from_u8(1).unwrap(); 81],
+				Err(ParseError::InvalidSegWitProgramLength)
+			),
+			(
+				vec![u5::try_from_u8(17).unwrap(); 1],
+				Err(ParseError::InvalidPubKeyHashLength)
+			),
+			(
+				vec![u5::try_from_u8(18).unwrap(); 1],
+				Err(ParseError::InvalidScriptHashLength)
 			)
 		];
 
 		for (input, expected) in cases.into_iter() {
-			assert_eq!(Fallback::from_base32(&input), Ok(expected));
+			assert_eq!(Fallback::from_base32(&input), expected);
 		}
 	}
 
@@ -880,6 +913,11 @@ mod test {
 		});
 
 		assert_eq!(Route::from_base32(&input), Ok(Route(expected)));
+
+		assert_eq!(
+			Route::from_base32(&[u5::try_from_u8(0).unwrap(); 40][..]),
+			Err(ParseError::UnexpectedEndOfTaggedFields)
+		);
 	}
 
 	#[test]
