@@ -311,14 +311,30 @@ impl FromBase32 for RawDataPart {
 			return Err(ParseError::TooShortDataPart);
 		}
 
-		let timestamp: u64 = parse_int_be(&data[0..7], 32)
-			.expect("7*5bit < 64bit, no overflow possible");
+		let timestamp = PositiveTimestamp::from_base32(&data[0..7])?;
 		let tagged = parse_tagged_parts(&data[7..])?;
 
 		Ok(RawDataPart {
 			timestamp: timestamp,
 			tagged_fields: tagged,
 		})
+	}
+}
+
+impl FromBase32 for PositiveTimestamp {
+	type Err = ParseError;
+
+	fn from_base32(b32: &[u5]) -> Result<Self, Self::Err> {
+		if b32.len() != 7 {
+			return Err(ParseError::InvalidSliceLength("PositiveTimestamp::from_base32()".into()));
+		}
+		let timestamp: u64 = parse_int_be(b32, 32)
+			.expect("7*5bit < 64bit, no overflow possible");
+		match PositiveTimestamp::from_unix_timestamp(timestamp) {
+			Ok(t) => Ok(t),
+			Err(CreationError::TimestampOutOfBounds) => Err(ParseError::TimestampOverflow),
+			Err(_) => unreachable!(),
+		}
 	}
 }
 
@@ -589,7 +605,8 @@ pub enum ParseError {
 	InvalidScriptHashLength,
 	InvalidRecoveryId,
 	InvalidSliceLength(String),
-	Skip
+	Skip,
+	TimestampOverflow,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -648,6 +665,7 @@ impl error::Error for ParseError {
 			InvalidRecoveryId => "recovery id is out of range (should be in [0,3])",
 			InvalidSliceLength(_) => "some slice had the wrong length",
 			Skip => "the tagged field has to be skipped because of an unexpected, but allowed property",
+			TimestampOverflow => "the invoice's timestamp could not be represented as SystemTime",
 		}
 	}
 }
@@ -924,7 +942,8 @@ mod test {
 	fn test_raw_signed_invoice_deserialization() {
 		use TaggedField::*;
 		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
-		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256};
+		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
+			 PositiveTimestamp};
 
 		assert_eq!(
 			"lnbc1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmw\
@@ -938,7 +957,7 @@ mod test {
 						si_prefix: None,
 					},
 					data: RawDataPart {
-					timestamp: 1496314658,
+					timestamp: PositiveTimestamp::from_unix_timestamp(1496314658).unwrap(),
 					tagged_fields: vec ! [
 						PaymentHash(Sha256(Sha256Hash::from_hex(
 							"0001020304050607080900010203040506070809000102030405060708090102"

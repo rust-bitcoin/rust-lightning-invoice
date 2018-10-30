@@ -13,12 +13,31 @@ use std::ops::Deref;
 
 use std::iter::FilterMap;
 use std::slice::Iter;
+use std::time::{SystemTime, Duration, UNIX_EPOCH};
 
 mod de;
 mod ser;
 mod tb;
 
 pub use de::{ParseError, ParseOrSemanticError};
+
+
+// TODO: fix before 2038 (see rust PR #55527)
+/// Defines the maximum UNIX timestamp that can be represented as `SystemTime`. This is checked by
+/// one of the unit tests, please run them.
+const SYSTEM_TIME_MAX_UNIX_TIMESTAMP: u64 = std::i32::MAX as u64;
+
+/// This function is used as a static assert for the size of `SystemTime`. If the crate fails to
+/// compile due to it this indicates that your system uses unexpected bounds for `SystemTime`. You
+/// can remove this functions and run the test `test_system_time_bounds_assumptions`. In any case,
+/// please open an issue. If all tests pass you should be able to use this library safely by just
+/// removing this function till we patch it accordingly.
+fn __system_time_size_check() {
+	/// Use 2 * sizeof(u64) as expected size since the expected underlying implementation is storing
+	/// a `Duration` since `SystemTime::UNIX_EPOCH`.
+	unsafe { std::mem::transmute::<SystemTime, [u8; 16]>(UNIX_EPOCH); }
+}
+
 
 /// Builder for `Invoice`s. It's the most convenient and advised way to use this library. It ensures
 /// that only a semantically and syntactically correct Invoice can be built using it.
@@ -72,7 +91,7 @@ pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool, T: tb::Bool> {
 	currency: Currency,
 	amount: Option<u64>,
 	si_prefix: Option<SiPrefix>,
-	timestamp: Option<u64>,
+	timestamp: Option<PositiveTimestamp>,
 	tagged_fields: Vec<TaggedField>,
 	error: Option<CreationError>,
 
@@ -149,13 +168,21 @@ pub struct RawHrp {
 /// Data of the `RawInvoice` that is encoded in the data part
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RawDataPart {
-	// TODO: find better fitting type that only allows positive timestamps to avoid checks for negative timestamps when encoding
-	/// generation time of the invoice as UNIX timestamp
-	pub timestamp: u64,
+	/// generation time of the invoice
+	pub timestamp: PositiveTimestamp,
 
 	/// tagged fields of the payment request
 	pub tagged_fields: Vec<RawTaggedField>,
 }
+
+/// A timestamp that refers to a date after 1 January 1970 which means its representation as UNIX
+/// timestamp is positive.
+///
+/// # Invariants
+/// The UNIX timestamp representing the stored time has to be positive and small enough so that
+/// a `EpiryTime` can be added to it without an overflow.
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub struct PositiveTimestamp(SystemTime);
 
 /// SI prefixes for the human readable part
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
@@ -442,17 +469,30 @@ impl<D: tb::Bool, T: tb::Bool> InvoiceBuilder<D, tb::False, T> {
 
 impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H, tb::False> {
 	/// Sets the timestamp. `time` is a UNIX timestamp.
-	pub fn timestamp(mut self, time: u64) -> InvoiceBuilder<D, H, tb::True> {
-		self.timestamp = Some(time);
+	pub fn timestamp_raw(mut self, time: u64) -> InvoiceBuilder<D, H, tb::True> {
+		match PositiveTimestamp::from_unix_timestamp(time) {
+			Ok(t) => self.timestamp = Some(t),
+			Err(e) => self.error = Some(e),
+		}
+
+		self.set_flags()
+	}
+
+	/// Sets the timestamp.
+	pub fn timestamp(mut self, time: SystemTime) -> InvoiceBuilder<D, H, tb::True> {
+		match PositiveTimestamp::from_system_time(time) {
+			Ok(t) => self.timestamp = Some(t),
+			Err(e) => self.error = Some(e),
+		}
+
 		self.set_flags()
 	}
 
 	/// Sets the timestamp to the current UNIX timestamp.
 	pub fn current_timestamp(mut self) -> InvoiceBuilder<D, H, tb::True> {
 		use std::time::{SystemTime, UNIX_EPOCH};
-		let now = SystemTime::now();
-		let since_unix_epoch = now.duration_since(UNIX_EPOCH).expect("it won't be 1970 ever again");
-		self.timestamp = Some(since_unix_epoch.as_secs() as u64);
+		let now = PositiveTimestamp::from_system_time(SystemTime::now());
+		self.timestamp = Some(now.expect("for the foreseeable future this shouldn't happen"));
 		self.set_flags()
 	}
 }
@@ -717,6 +757,60 @@ impl RawInvoice {
 	}
 }
 
+impl PositiveTimestamp {
+	/// Create a new `PositiveTimestamp` from a unix timestamp in the Range
+	/// `0...SYSTEM_TIME_MAX_UNIX_TIMESTAMP`, otherwise return a
+	/// `CreationError::TimestampOutOfBounds`.
+	pub fn from_unix_timestamp(unix_seconds: u64) -> Result<Self, CreationError> {
+		if unix_seconds > SYSTEM_TIME_MAX_UNIX_TIMESTAMP {
+			Err(CreationError::TimestampOutOfBounds)
+		} else {
+			Ok(PositiveTimestamp(UNIX_EPOCH + Duration::from_secs(unix_seconds)))
+		}
+	}
+
+	/// Create a new `PositiveTimestamp` from a `SystemTime` with a corresponding unix timestamp in
+	/// the Range `0...SYSTEM_TIME_MAX_UNIX_TIMESTAMP`, otherwise return a
+	/// `CreationError::TimestampOutOfBounds`.
+	pub fn from_system_time(time: SystemTime) -> Result<Self, CreationError> {
+		if time
+			.duration_since(UNIX_EPOCH)
+			.map(|t| t.as_secs() <= SYSTEM_TIME_MAX_UNIX_TIMESTAMP) // check for consistency reasons
+			.unwrap_or(true)
+			{
+				Ok(PositiveTimestamp(time))
+			} else {
+			Err(CreationError::TimestampOutOfBounds)
+		}
+	}
+
+	/// Returns the UNIX timestamp representing the stored time
+	pub fn as_unix_timestamp(&self) -> u64 {
+		self.0.duration_since(UNIX_EPOCH)
+			.expect("ensured by type contract/constructors")
+			.as_secs()
+	}
+
+	/// Returns a reference to the internal `SystemTime` time representation
+	pub fn as_time(&self) -> &SystemTime {
+		&self.0
+	}
+}
+
+impl Into<SystemTime> for PositiveTimestamp {
+	fn into(self) -> SystemTime {
+		self.0
+	}
+}
+
+impl Deref for PositiveTimestamp {
+	type Target = SystemTime;
+
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
 impl Invoice {
 	fn into_signed_raw(self) -> SignedRawInvoice {
 		self.signed_invoice
@@ -788,8 +882,8 @@ impl Invoice {
 		Ok(invoice)
 	}
 
-	pub fn timestamp(&self) -> u64 {
-		self.signed_invoice.raw_invoice.data.timestamp
+	pub fn timestamp(&self) -> &SystemTime {
+		self.signed_invoice.raw_invoice().data.timestamp.as_time()
 	}
 
 	/// Returns an iterator over all tagged fields of this Invoice.
@@ -967,6 +1061,9 @@ pub enum CreationError {
 
 	/// The specified route has too many hops and can't be encoded
 	RouteTooLong,
+
+	/// The unix timestamp of the supplied date is <0 or can't be represented as `SystemTime`
+	TimestampOutOfBounds,
 }
 
 /// Errors that may occur when converting a `RawInvoice` to an `Invoice`. They relate to the
@@ -998,8 +1095,26 @@ mod test {
 	use bitcoin_hashes::sha256::Sha256Hash;
 
 	#[test]
+	fn test_system_time_bounds_assumptions() {
+		use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+		// The upper and lower bounds of `SystemTime` are not part of its public contract and are
+		// platform specific. That's why we have to test if our assumptions regarding these bounds
+		// hold on the target platform.
+		//
+		// If this test fails on your platform, please don't use the library and open an issue
+		// instead so we can resolve the situation. Currently this library is tested on:
+		//   * Linux (64bit)
+		let fail_date = UNIX_EPOCH + Duration::from_secs(::SYSTEM_TIME_MAX_UNIX_TIMESTAMP);
+		let year = Duration::from_secs(60 * 60 * 24 * 365);
+
+		// Make sure that the library will keep working for another year
+		assert!(fail_date.duration_since(SystemTime::now()).unwrap() > year)
+	}
+
+	#[test]
 	fn test_calc_invoice_hash() {
-		use ::{RawInvoice, RawHrp, RawDataPart, Currency};
+		use ::{RawInvoice, RawHrp, RawDataPart, Currency, PositiveTimestamp};
 		use secp256k1::*;
 		use ::TaggedField::*;
 
@@ -1010,7 +1125,7 @@ mod test {
 				si_prefix: None,
 			},
 			data: RawDataPart {
-				timestamp: 1496314658,
+				timestamp: PositiveTimestamp::from_unix_timestamp(1496314658).unwrap(),
 				tagged_fields: vec![
 					PaymentHash(::Sha256(Sha256Hash::from_hex(
 						"0001020304050607080900010203040506070809000102030405060708090102"
@@ -1036,7 +1151,8 @@ mod test {
 		use TaggedField::*;
 		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
 		use secp256k1::key::{SecretKey, PublicKey};
-		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256};
+		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
+			 PositiveTimestamp};
 
 		let mut invoice = SignedRawInvoice {
 			raw_invoice: RawInvoice {
@@ -1046,7 +1162,7 @@ mod test {
 					si_prefix: None,
 				},
 				data: RawDataPart {
-					timestamp: 1496314658,
+					timestamp: PositiveTimestamp::from_unix_timestamp(1496314658).unwrap(),
 					tagged_fields: vec ! [
 						PaymentHash(Sha256(Sha256Hash::from_hex(
 							"0001020304050607080900010203040506070809000102030405060708090102"
@@ -1181,6 +1297,7 @@ mod test {
 		use ::*;
 		use secp256k1::Secp256k1;
 		use secp256k1::key::{SecretKey, PublicKey};
+		use std::time::UNIX_EPOCH;
 
 		let secp_ctx = Secp256k1::new();
 
@@ -1230,7 +1347,7 @@ mod test {
 
 		let builder = InvoiceBuilder::new(Currency::BitcoinTestnet)
 			.amount_pico_btc(123)
-			.timestamp(1234567)
+			.timestamp_raw(1234567)
 			.payee_pub_key(public_key.clone())
 			.expiry_time_seconds(54321)
 			.min_final_cltv_expiry(144)
@@ -1250,7 +1367,10 @@ mod test {
 
 		assert_eq!(invoice.amount_pico_btc(), Some(123));
 		assert_eq!(invoice.currency(), Currency::BitcoinTestnet);
-		assert_eq!(invoice.timestamp(), 1234567);
+		assert_eq!(
+			invoice.timestamp().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+			1234567
+		);
 		assert_eq!(invoice.payee_pub_key(), Some(&PayeePubKey(public_key)));
 		assert_eq!(invoice.expiry_time(), Some(&ExpiryTime{seconds: 54321}));
 		assert_eq!(invoice.min_final_cltv_expiry(), Some(&MinFinalCltvExpiry(144)));

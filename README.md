@@ -5,6 +5,9 @@
 This repo provides datastructures for BOLT 11 lightning invoices.
 It provides functions to parse and serialize invoices from and to bech32.
 
+**Please be sure to run the test suite since we need to check assumptions
+regarding `SystemTime`'s bounds on your platform.**
+
 ## Contributing
 * same coding style standard as [rust-bitcoin/rust-lightning](https://github.com/rust-bitcoin/rust-lightning)
 * use tabs and spaces (appropriately)
