@@ -46,9 +46,9 @@ impl Display for RawHrp {
 
 impl Display for Currency {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-		let currency_code = match self {
-			&Currency::Bitcoin => "bc",
-			&Currency::BitcoinTestnet => "tb",
+		let currency_code = match *self {
+			Currency::Bitcoin => "bc",
+			Currency::BitcoinTestnet => "tb",
 		};
 		write!(f, "{}", currency_code)
 	}

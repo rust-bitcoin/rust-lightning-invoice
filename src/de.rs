@@ -80,11 +80,7 @@ mod hrp_sm {
 		}
 
 		fn is_final(&self) -> bool {
-			if *self == States::ParseL || *self == States::ParseN {
-				false
-			} else {
-				true
-			}
+			!(*self == States::ParseL || *self == States::ParseN)
 		}
 	}
 
@@ -710,7 +706,6 @@ mod test {
 	use de::ParseError;
 	use secp256k1::{PublicKey, Secp256k1};
 	use bech32::u5;
-	use SignedRawInvoice;
 	use bitcoin_hashes::hex::FromHex;
 	use bitcoin_hashes::sha256::Sha256Hash;
 
