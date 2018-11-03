@@ -37,8 +37,8 @@ const MAX_EXPIRY_TIME: u64 = 60 * 60 * 24 * 356;
 /// please open an issue. If all tests pass you should be able to use this library safely by just
 /// removing this function till we patch it accordingly.
 fn __system_time_size_check() {
-	/// Use 2 * sizeof(u64) as expected size since the expected underlying implementation is storing
-	/// a `Duration` since `SystemTime::UNIX_EPOCH`.
+	// Use 2 * sizeof(u64) as expected size since the expected underlying implementation is storing
+	// a `Duration` since `SystemTime::UNIX_EPOCH`.
 	unsafe { std::mem::transmute::<SystemTime, [u8; 16]>(UNIX_EPOCH); }
 }
 
@@ -246,11 +246,11 @@ impl SiPrefix {
 	/// Returns the multiplier to go from a BTC value to picoBTC implied by this SiPrefix.
 	/// This is effectively 10^12 * the prefix multiplier
 	pub fn multiplier(&self) -> u64 {
-		match self {
-			&SiPrefix::Milli => 1_000_000_000,
-			&SiPrefix::Micro => 1_000_000,
-			&SiPrefix::Nano => 1_000,
-			&SiPrefix::Pico => 1,
+		match *self {
+			SiPrefix::Milli => 1_000_000_000,
+			SiPrefix::Micro => 1_000_000,
+			SiPrefix::Nano => 1_000,
+			SiPrefix::Pico => 1,
 		}
 	}
 
@@ -354,8 +354,6 @@ pub struct RouteHop {
 }
 
 pub mod constants {
-	use bech32::u5;
-
 	pub const TAG_PAYMENT_HASH: u8 = 1;
 	pub const TAG_DESCRIPTION: u8 = 13;
 	pub const TAG_PAYEE_PUB_KEY: u8 = 19;
@@ -364,17 +362,6 @@ pub mod constants {
 	pub const TAG_MIN_FINAL_CLTV_EXPIRY: u8 = 24;
 	pub const TAG_FALLBACK: u8 = 9;
 	pub const TAG_ROUTE: u8 = 3;
-}
-
-/// FOR INTERNAL USE ONLY! READ BELOW!
-///
-/// It's a convenience function to convert `u8` tags to `u5` tags. Therefore `tag` has to
-/// be in range `[0..32]`.
-///
-/// # Panics
-/// If the `tag` value is not in the range `[0..32]`.
-fn as_u5(tag: u8) -> u5 {
-	u5::try_from_u8(tag).unwrap()
 }
 
 impl InvoiceBuilder<tb::False, tb::False, tb::False> {
@@ -633,7 +620,7 @@ impl SignedRawInvoice {
 			recovered_pub_key = Some(recovered);
 		}
 
-		let pub_key = included_pub_key.or(recovered_pub_key.as_ref())
+		let pub_key = included_pub_key.or_else(|| recovered_pub_key.as_ref())
 			.expect("One is always present");
 
 		let hash = Message::from_slice(&self.hash[..])
@@ -671,8 +658,8 @@ impl SignedRawInvoice {
 /// ```
 macro_rules! find_extract {
     ($iter:expr, $enm:pat, $enm_var:ident) => {
-    	$iter.filter_map(|tf| match tf {
-			&$enm => Some($enm_var),
+    	$iter.filter_map(|tf| match *tf {
+			$enm => Some($enm_var),
 			_ => None,
 		}).next()
     };
@@ -741,8 +728,8 @@ impl RawInvoice {
 		// function's type signature.
 		// TODO: refactor once impl Trait is available
 		fn match_raw(raw: &RawTaggedField) -> Option<&TaggedField> {
-			match raw {
-				&RawTaggedField::KnownSemantics(ref tf) => Some(tf),
+			match *raw {
+				RawTaggedField::KnownSemantics(ref tf) => Some(tf),
 				_ => None,
 			}
 		}
@@ -777,14 +764,14 @@ impl RawInvoice {
 	pub fn fallbacks(&self) -> Vec<&Fallback> {
 		self.known_tagged_fields().filter_map(|tf| match tf {
 			&TaggedField::Fallback(ref f) => Some(f),
-			num_traits => None,
+			_ => None,
 		}).collect::<Vec<&Fallback>>()
 	}
 
 	pub fn routes(&self) -> Vec<&Route> {
 		self.known_tagged_fields().filter_map(|tf| match tf {
 			&TaggedField::Route(ref r) => Some(r),
-			num_traits => None,
+			_ => None,
 		}).collect::<Vec<&Route>>()
 	}
 
@@ -854,7 +841,7 @@ impl Deref for PositiveTimestamp {
 }
 
 impl Invoice {
-	fn into_signed_raw(self) -> SignedRawInvoice {
+	pub fn into_signed_raw(self) -> SignedRawInvoice {
 		self.signed_invoice
 	}
 
@@ -1183,7 +1170,6 @@ mod test {
 	#[test]
 	fn test_calc_invoice_hash() {
 		use ::{RawInvoice, RawHrp, RawDataPart, Currency, PositiveTimestamp};
-		use secp256k1::*;
 		use ::TaggedField::*;
 
 		let invoice = RawInvoice {
@@ -1222,7 +1208,7 @@ mod test {
 		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
 			 PositiveTimestamp};
 
-		let mut invoice = SignedRawInvoice {
+		let invoice = SignedRawInvoice {
 			raw_invoice: RawInvoice {
 				hrp: RawHrp {
 					currency: Currency::Bitcoin,
