@@ -1,3 +1,20 @@
+#![deny(missing_docs)]
+#![deny(non_upper_case_globals)]
+#![deny(non_camel_case_types)]
+#![deny(non_snake_case)]
+#![deny(unused_mut)]
+
+#![cfg_attr(feature = "strict", deny(warnings))]
+
+//! This crate provides data structures to represent
+//! [lightning BOLT11](https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md)
+//! invoices and functions to create, encode and decode these. If you just want to use the standard
+//! en-/decoding functionality this should get you started:
+//!
+//!   * For parsing use `str::parse::<Invoice>(&self)` (see the docs of `impl FromStr for Invoice`)
+//!   * For constructing invoices use the `InvoiceBuilder`
+//!   * For serializing invoices use the `Display`/`ToString` traits
+
 extern crate bech32;
 extern crate bitcoin_hashes;
 extern crate num_traits;
@@ -156,10 +173,15 @@ pub struct Invoice {
 	signed_invoice: SignedRawInvoice,
 }
 
+/// Represents the description of an invoice which has to be either a directly included string or
+/// a hash of a description provided out of band.
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum InvoiceDescription<'f> {
+	/// Reference to the directly supplied description in the invoice
 	Direct(&'f Description),
-	Hash(&'f Sha256)
+
+	/// Reference to the description's hash included in the invoice
+	Hash(&'f Sha256),
 }
 
 /// Represents a signed `RawInvoice` with cached hash. The signature is not checked and may be
@@ -188,6 +210,8 @@ pub struct SignedRawInvoice {
 /// Represents an syntactically correct Invoice for a payment on the lightning network,
 /// but without the signature information.
 /// De- and encoding should not lead to information loss but may lead to different hashes.
+///
+/// For methods without docs see the corresponding methods in `Invoice`.
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RawInvoice {
 	/// human readable part
@@ -263,6 +287,8 @@ impl SiPrefix {
 	}
 }
 
+/// Enum representing the crypto currencies supported by this library
+#[allow(missing_docs)]
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Currency {
 	Bitcoin,
@@ -279,6 +305,9 @@ pub enum RawTaggedField {
 }
 
 /// Tagged field with known tag
+///
+/// For descriptions of the enum values please refer to the enclosed type's docs.
+#[allow(missing_docs)]
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum TaggedField {
 	PaymentHash(Sha256),
@@ -322,6 +351,7 @@ pub struct MinFinalCltvExpiry(pub u64);
 
 // TODO: better types instead onf byte arrays
 /// Fallback address in case no LN payment is possible
+#[allow(missing_docs)]
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Fallback {
 	SegWitProgram {
@@ -344,15 +374,27 @@ pub struct Signature(pub RecoverableSignature);
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Route(Vec<RouteHop>);
 
+/// Node on a private route
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RouteHop {
+	/// Node's public key
 	pub pubkey: PublicKey,
+
+	/// Which channel of this node we would be using
 	pub short_channel_id: [u8; 8],
+
+	/// Fee charged by this node per transaction
 	pub fee_base_msat: u32,
+
+	/// Fee charged by this node proportional to the amount routed
 	pub fee_proportional_millionths: u32,
+
+	/// Delta substracted by this node from incoming cltv_expiry value
 	pub cltv_expiry_delta: u16,
 }
 
+/// Tag constants as specified in BOLT11
+#[allow(missing_docs)]
 pub mod constants {
 	pub const TAG_PAYMENT_HASH: u8 = 1;
 	pub const TAG_DESCRIPTION: u8 = 13;
@@ -665,6 +707,7 @@ macro_rules! find_extract {
     };
 }
 
+#[allow(missing_docs)]
 impl RawInvoice {
 	/// Hash the HRP as bytes and signatureless data part.
 	fn hash_from_parts(hrp_bytes: &[u8], data_without_signature: &[u5]) -> [u8; 32] {
@@ -841,6 +884,7 @@ impl Deref for PositiveTimestamp {
 }
 
 impl Invoice {
+	/// Transform the `Invoice` into it's unchecked version
 	pub fn into_signed_raw(self) -> SignedRawInvoice {
 		self.signed_invoice
 	}
@@ -911,6 +955,7 @@ impl Invoice {
 		Ok(invoice)
 	}
 
+	/// Returns the `Invoice`'s timestamp (should equal it's creation time)
 	pub fn timestamp(&self) -> &SystemTime {
 		self.signed_invoice.raw_invoice().data.timestamp.as_time()
 	}
@@ -921,10 +966,12 @@ impl Invoice {
 		self.signed_invoice.raw_invoice().known_tagged_fields()
 	}
 
+	/// Returns the hash to which we will receive the preimage on completion of the payment
 	pub fn payment_hash(&self) -> &Sha256 {
 		self.signed_invoice.payment_hash().expect("checked by constructor")
 	}
 
+	/// Return the description or a hash of it for longer ones
 	pub fn description(&self) -> InvoiceDescription {
 		if let Some(ref direct) = self.signed_invoice.description() {
 			return InvoiceDescription::Direct(direct);
@@ -934,34 +981,42 @@ impl Invoice {
 		unreachable!("ensured by constructor");
 	}
 
+	/// Get the payee's public key if one was included in the invoice
 	pub fn payee_pub_key(&self) -> Option<&PayeePubKey> {
 		self.signed_invoice.payee_pub_key()
 	}
 
+	/// Recover the payee's public key (only to be used if none was included in the invoice)
 	pub fn recover_payee_pub_key(&self) -> PayeePubKey {
 		self.signed_invoice.recover_payee_pub_key().expect("was checked by constructor")
 	}
 
+	/// Returns the invoice's expiry time if present
 	pub fn expiry_time(&self) -> Option<&ExpiryTime> {
 		self.signed_invoice.expiry_time()
 	}
 
+	/// Returns the invoice's `min_cltv_expiry` time if present
 	pub fn min_final_cltv_expiry(&self) -> Option<&MinFinalCltvExpiry> {
 		self.signed_invoice.min_final_cltv_expiry()
 	}
 
+	/// Returns a list of all fallback addresses
 	pub fn fallbacks(&self) -> Vec<&Fallback> {
 		self.signed_invoice.fallbacks()
 	}
 
+	/// Returns a list of all routes included in the invoice
 	pub fn routes(&self) -> Vec<&Route> {
 		self.signed_invoice.routes()
 	}
 
+	/// Returns the currency for which the invoice was issued
 	pub fn currency(&self) -> Currency {
 		self.signed_invoice.currency()
 	}
 
+	/// Returns the amount if specified in the invoice as pico <currency>.
 	pub fn amount_pico_btc(&self) -> Option<u64> {
 		self.signed_invoice.amount_pico_btc()
 	}
@@ -1005,6 +1060,7 @@ impl Description {
 		}
 	}
 
+	/// Returns the underlying description `String`
 	pub fn into_inner(self) -> String {
 		self.0
 	}
@@ -1039,6 +1095,9 @@ impl Deref for PayeePubKey {
 }
 
 impl ExpiryTime {
+	/// Construct an `ExpiryTime` from seconds. If there exists a `PositiveTimestamp` which would
+	/// overflow on adding the `EpiryTime` to it then this function will return a
+	/// `CreationError::ExpiryTimeOutOfBounds`.
 	pub fn from_seconds(seconds: u64) -> Result<ExpiryTime, CreationError> {
 		if seconds <= MAX_EXPIRY_TIME {
 			Ok(ExpiryTime(Duration::from_secs(seconds)))
@@ -1047,6 +1106,9 @@ impl ExpiryTime {
 		}
 	}
 
+	/// Construct an `ExpiryTime` from a `Duration`. If there exists a `PositiveTimestamp` which
+	/// would overflow on adding the `EpiryTime` to it then this function will return a
+	/// `CreationError::ExpiryTimeOutOfBounds`.
 	pub fn from_duration(duration: Duration) -> Result<ExpiryTime, CreationError> {
 		if duration.as_secs() <= MAX_EXPIRY_TIME {
 			Ok(ExpiryTime(duration))
@@ -1055,16 +1117,19 @@ impl ExpiryTime {
 		}
 	}
 
+	/// Returns the expiry time in seconds
 	pub fn as_seconds(&self) -> u64 {
 		self.0.as_secs()
 	}
 
+	/// Returns a reference to the underlying `Duration` (=expiry time)
 	pub fn as_duration(&self) -> &Duration {
 		&self.0
 	}
 }
 
 impl Route {
+	/// Create a new (partial) route from a list of hops
 	pub fn new(hops: Vec<RouteHop>) -> Result<Route, CreationError> {
 		if hops.len() <= 12 {
 			Ok(Route(hops))
@@ -1073,7 +1138,8 @@ impl Route {
 		}
 	}
 
-	fn into_inner(self) -> Vec<RouteHop> {
+	/// Returrn the underlying vector of hops
+	pub fn into_inner(self) -> Vec<RouteHop> {
 		self.0
 	}
 }
@@ -1128,13 +1194,22 @@ pub enum CreationError {
 /// requirements sections in BOLT #11
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum SemanticError {
+	/// The invoice is missing the mandatory payment hash
 	NoPaymentHash,
+
+	/// The invoice has multiple payment hashes which isn't allowed
 	MultiplePaymentHashes,
 
+	/// No description or description hash are part of the invoice
 	NoDescription,
+
+	/// The invoice contains multiple descriptions and/or description hashes which isn't allowed
 	MultipleDescriptions,
 
+	/// The recovery id doesn't fit the signature/pub key
 	InvalidRecoveryId,
+
+	/// The invoice's signature is invalid
 	InvalidSignature,
 }
 
@@ -1142,7 +1217,10 @@ pub enum SemanticError {
 /// may occur.
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum SignOrCreationError<S> {
+	/// An error occurred during signing
 	SignError(S),
+
+	/// An error occurred while building the transaction
 	CreationError(CreationError),
 }
 
