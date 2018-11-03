@@ -1,5 +1,6 @@
 # lightning-invoice (WIP)
 [![Build Status](https://travis-ci.org/rust-bitcoin/rust-lightning-invoice.svg?branch=master)](https://travis-ci.org/rust-bitcoin/rust-lightning-invoice)
+[Coverage Report](https://rust-bitcoin.github.io/rust-lightning-invoice/target/kcov/merged/)
 
 This repo provides datastructures for BOLT 11 lightning invoices.
 It provides functions to parse and serialize invoices from and to bech32.

@@ -7,23 +7,16 @@ rust:
   - 1.14.0 # rustc on debian stable
 cache: cargo
 
-script:
-  - cargo test
-
-deploy:
-  provider: pages
-  skip-cleanup: true
-  github-token: $GITHUB_TOKEN  # Set in the settings page of your repository, as a secure variable
-  keep-history: true
-  local-dir: target/kcov/merged
-  on:
-    branch: master
+jobs:
+  include:
+  - stage: test
+    script: cargo test
+  - stage: coverage
     rust: stable
-  script:
-  - mkdir target/kcov target/kcov/unit target/kcov/integration target/kcov/merged
-  - kcov target/kcov/unit target/debug/lightning_invoice-!(*.d)
-  - kcov target/kcov/integration target/debug/ser_de-!(*.d)
-  - kcov target/kcov/unit target/debug/lightning_invoice-!(*.d)
+    branches:
+      only:
+      - master
+    script: bash .travis-kcov.sh
 
 before_install:
   - sudo apt-get update
