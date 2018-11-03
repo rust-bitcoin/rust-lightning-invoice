@@ -6,6 +6,7 @@ use bitcoin_hashes::hex::FromHex;
 use bitcoin_hashes::sha256::Sha256Hash;
 use lightning_invoice::*;
 use secp256k1::{Secp256k1, RecoverableSignature, RecoveryId};
+use std::time::Duration;
 
 // TODO: add more of the examples from BOLT11 and generate ones causing SemanticErrors
 
@@ -50,7 +51,7 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 					"0001020304050607080900010203040506070809000102030405060708090102"
 				).unwrap())
 				.description("1 cup coffee".to_owned())
-				.expiry_time_seconds(60)
+				.expiry_time(Duration::from_secs(60))
 				.build_raw()
 				.unwrap()
 				.sign(|_| {

@@ -170,7 +170,7 @@ impl ToBase32<Vec<u5>> for PayeePubKey {
 
 impl ToBase32<Vec<u5>> for ExpiryTime {
 	fn to_base32(&self) -> Vec<u5> {
-		encode_int_be_base32(self.seconds)
+		encode_int_be_base32(self.as_seconds())
 	}
 }
 

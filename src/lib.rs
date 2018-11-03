@@ -22,10 +22,14 @@ mod tb;
 pub use de::{ParseError, ParseOrSemanticError};
 
 
-// TODO: fix before 2038 (see rust PR #55527)
+// TODO: fix before 2037 (see rust PR #55527)
 /// Defines the maximum UNIX timestamp that can be represented as `SystemTime`. This is checked by
 /// one of the unit tests, please run them.
 const SYSTEM_TIME_MAX_UNIX_TIMESTAMP: u64 = std::i32::MAX as u64;
+
+/// Allow the expiry time to be up to one year. Since this reduces the range of possible timestamps
+/// it should be rather low as long as we still have to support 32bit time representations
+const MAX_EXPIRY_TIME: u64 = 60 * 60 * 24 * 356;
 
 /// This function is used as a static assert for the size of `SystemTime`. If the crate fails to
 /// compile due to it this indicates that your system uses unexpected bounds for `SystemTime`. You
@@ -261,11 +265,15 @@ pub struct Description(String);
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct PayeePubKey(pub PublicKey);
 
-/// Positive duration that defines when (relatively to the timestamp) in the future the invoice expires
+/// Positive duration that defines when (relatively to the timestamp) in the future the invoice
+/// expires
+///
+/// # Invariants
+/// The number of seconds this expiry time represents has to be in the range
+/// `0...(SYSTEM_TIME_MAX_UNIX_TIMESTAMP - MAX_EXPIRY_TIME)` to avoid overflows when adding it to a
+/// timestamp
 #[derive(Eq, PartialEq, Debug, Clone)]
-pub struct ExpiryTime {
-	pub seconds: u64
-}
+pub struct ExpiryTime(Duration);
 
 /// `min_final_cltv_expiry` to use for the last HTLC in the route
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -381,9 +389,12 @@ impl<D: tb::Bool, H: tb::Bool, T: tb::Bool> InvoiceBuilder<D, H, T> {
 		self
 	}
 
-	/// Sets the expiry time in seconds.
-	pub fn expiry_time_seconds(mut self, expiry_seconds: u64) -> Self {
-		self.tagged_fields.push(TaggedField::ExpiryTime(ExpiryTime {seconds: expiry_seconds}));
+	/// Sets the expiry time
+	pub fn expiry_time(mut self, expiry_time: Duration) -> Self {
+        match ExpiryTime::from_duration(expiry_time) {
+            Ok(t) => self.tagged_fields.push(TaggedField::ExpiryTime(t)),
+            Err(e) => self.error = Some(e),
+        };
 		self
 	}
 
@@ -490,7 +501,7 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H, tb::False> {
 
 	/// Sets the timestamp to the current UNIX timestamp.
 	pub fn current_timestamp(mut self) -> InvoiceBuilder<D, H, tb::True> {
-		use std::time::{SystemTime, UNIX_EPOCH};
+		use std::time::SystemTime;
 		let now = PositiveTimestamp::from_system_time(SystemTime::now());
 		self.timestamp = Some(now.expect("for the foreseeable future this shouldn't happen"));
 		self.set_flags()
@@ -759,10 +770,10 @@ impl RawInvoice {
 
 impl PositiveTimestamp {
 	/// Create a new `PositiveTimestamp` from a unix timestamp in the Range
-	/// `0...SYSTEM_TIME_MAX_UNIX_TIMESTAMP`, otherwise return a
+	/// `0...SYSTEM_TIME_MAX_UNIX_TIMESTAMP - MAX_EXPIRY_TIME`, otherwise return a
 	/// `CreationError::TimestampOutOfBounds`.
 	pub fn from_unix_timestamp(unix_seconds: u64) -> Result<Self, CreationError> {
-		if unix_seconds > SYSTEM_TIME_MAX_UNIX_TIMESTAMP {
+		if unix_seconds > SYSTEM_TIME_MAX_UNIX_TIMESTAMP - MAX_EXPIRY_TIME {
 			Err(CreationError::TimestampOutOfBounds)
 		} else {
 			Ok(PositiveTimestamp(UNIX_EPOCH + Duration::from_secs(unix_seconds)))
@@ -770,12 +781,12 @@ impl PositiveTimestamp {
 	}
 
 	/// Create a new `PositiveTimestamp` from a `SystemTime` with a corresponding unix timestamp in
-	/// the Range `0...SYSTEM_TIME_MAX_UNIX_TIMESTAMP`, otherwise return a
+	/// the Range `0...SYSTEM_TIME_MAX_UNIX_TIMESTAMP - MAX_EXPIRY_TIME`, otherwise return a
 	/// `CreationError::TimestampOutOfBounds`.
 	pub fn from_system_time(time: SystemTime) -> Result<Self, CreationError> {
 		if time
 			.duration_since(UNIX_EPOCH)
-			.map(|t| t.as_secs() <= SYSTEM_TIME_MAX_UNIX_TIMESTAMP) // check for consistency reasons
+			.map(|t| t.as_secs() <= SYSTEM_TIME_MAX_UNIX_TIMESTAMP - MAX_EXPIRY_TIME)
 			.unwrap_or(true)
 			{
 				Ok(PositiveTimestamp(time))
@@ -1009,6 +1020,32 @@ impl Deref for PayeePubKey {
 	}
 }
 
+impl ExpiryTime {
+	pub fn from_seconds(seconds: u64) -> Result<ExpiryTime, CreationError> {
+		if seconds <= MAX_EXPIRY_TIME {
+			Ok(ExpiryTime(Duration::from_secs(seconds)))
+		} else {
+			Err(CreationError::ExpiryTimeOutOfBounds)
+		}
+	}
+
+	pub fn from_duration(duration: Duration) -> Result<ExpiryTime, CreationError> {
+		if duration.as_secs() <= MAX_EXPIRY_TIME {
+			Ok(ExpiryTime(duration))
+		} else {
+			Err(CreationError::ExpiryTimeOutOfBounds)
+		}
+	}
+
+	pub fn as_seconds(&self) -> u64 {
+		self.0.as_secs()
+	}
+
+	pub fn as_duration(&self) -> &Duration {
+		&self.0
+	}
+}
+
 impl Route {
 	pub fn new(hops: Vec<RouteHop>) -> Result<Route, CreationError> {
 		if hops.len() <= 12 {
@@ -1064,6 +1101,9 @@ pub enum CreationError {
 
 	/// The unix timestamp of the supplied date is <0 or can't be represented as `SystemTime`
 	TimestampOutOfBounds,
+
+	/// The supplied expiry time could cause an overflow if added to a `PositiveTimestamp`
+	ExpiryTimeOutOfBounds,
 }
 
 /// Errors that may occur when converting a `RawInvoice` to an `Invoice`. They relate to the
@@ -1109,7 +1149,27 @@ mod test {
 		let year = Duration::from_secs(60 * 60 * 24 * 365);
 
 		// Make sure that the library will keep working for another year
-		assert!(fail_date.duration_since(SystemTime::now()).unwrap() > year)
+		assert!(fail_date.duration_since(SystemTime::now()).unwrap() > year);
+
+        let max_ts = ::PositiveTimestamp::from_unix_timestamp(
+            ::SYSTEM_TIME_MAX_UNIX_TIMESTAMP - ::MAX_EXPIRY_TIME
+        ).unwrap();
+        let max_exp = ::ExpiryTime::from_seconds(::MAX_EXPIRY_TIME).unwrap();
+
+        assert_eq!(
+            (*max_ts.as_time() + *max_exp.as_duration()).duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            ::SYSTEM_TIME_MAX_UNIX_TIMESTAMP
+        );
+
+        assert_eq!(
+            ::PositiveTimestamp::from_unix_timestamp(::SYSTEM_TIME_MAX_UNIX_TIMESTAMP + 1),
+            Err(::CreationError::TimestampOutOfBounds)
+        );
+
+        assert_eq!(
+            ::ExpiryTime::from_seconds(::MAX_EXPIRY_TIME + 1),
+            Err(::CreationError::ExpiryTimeOutOfBounds)
+        );
 	}
 
 	#[test]
@@ -1297,7 +1357,7 @@ mod test {
 		use ::*;
 		use secp256k1::Secp256k1;
 		use secp256k1::key::{SecretKey, PublicKey};
-		use std::time::UNIX_EPOCH;
+		use std::time::{UNIX_EPOCH, Duration};
 
 		let secp_ctx = Secp256k1::new();
 
@@ -1349,7 +1409,7 @@ mod test {
 			.amount_pico_btc(123)
 			.timestamp_raw(1234567)
 			.payee_pub_key(public_key.clone())
-			.expiry_time_seconds(54321)
+			.expiry_time(Duration::from_secs(54321))
 			.min_final_cltv_expiry(144)
 			.min_final_cltv_expiry(143)
 			.fallback(Fallback::PubKeyHash([0;20]))
@@ -1372,7 +1432,7 @@ mod test {
 			1234567
 		);
 		assert_eq!(invoice.payee_pub_key(), Some(&PayeePubKey(public_key)));
-		assert_eq!(invoice.expiry_time(), Some(&ExpiryTime{seconds: 54321}));
+		assert_eq!(invoice.expiry_time(), Some(&ExpiryTime::from_seconds(54321).unwrap()));
 		assert_eq!(invoice.min_final_cltv_expiry(), Some(&MinFinalCltvExpiry(144)));
 		assert_eq!(invoice.fallbacks(), vec![&Fallback::PubKeyHash([0;20])]);
 		assert_eq!(invoice.routes(), vec![&Route(route_1), &Route(route_2)]);

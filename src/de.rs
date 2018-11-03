@@ -485,11 +485,11 @@ impl FromBase32 for ExpiryTime {
 	type Err = ParseError;
 
 	fn from_base32(field_data: &[u5]) -> Result<ExpiryTime, ParseError> {
-		let expiry = parse_int_be::<u64, u5>(field_data, 32);
-		if let Some(expiry) = expiry {
-			Ok(ExpiryTime{seconds: expiry})
-		} else {
-			Err(ParseError::IntegerOverflowError)
+		match parse_int_be::<u64, u5>(field_data, 32)
+			.and_then(|t| ExpiryTime::from_seconds(t).ok()) // ok, since the only error is out of bounds
+		{
+			Some(t) => Ok(t),
+			None => Err(ParseError::IntegerOverflowError),
 		}
 	}
 }
@@ -814,7 +814,7 @@ mod test {
 		use bech32::FromBase32;
 
 		let input = from_bech32("pu".as_bytes());
-		let expected = Ok(ExpiryTime{seconds: 60});
+		let expected = Ok(ExpiryTime::from_seconds(60).unwrap());
 		assert_eq!(ExpiryTime::from_base32(&input), expected);
 
 		let input_too_large = from_bech32("sqqqqqqqqqqqq".as_bytes());
