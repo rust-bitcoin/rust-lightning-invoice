@@ -6,7 +6,7 @@ use bitcoin_hashes::hex::FromHex;
 use bitcoin_hashes::sha256::Sha256Hash;
 use lightning_invoice::*;
 use secp256k1::{Secp256k1, RecoverableSignature, RecoveryId};
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 // TODO: add more of the examples from BOLT11 and generate ones causing SemanticErrors
 
@@ -17,7 +17,7 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 			wd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq8rkx3yf5tcsyz3d73gafnh3cax9rn449d9p5uxz9\
 			ezhhypd0elx87sjle52x86fux2ypatgddc6k63n7erqz25le42c4u4ecky03ylcqca784w".to_owned(),
 			InvoiceBuilder::new(Currency::Bitcoin)
-				.timestamp_raw(1496314658)
+				.timestamp(UNIX_EPOCH + Duration::from_secs(1496314658))
 				.payment_hash(Sha256Hash::from_hex(
 						"0001020304050607080900010203040506070809000102030405060708090102"
 				).unwrap())
@@ -46,7 +46,7 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 			9zw97j25emudupq63nyw24cg27h2rspfj9srp".to_owned(),
 			InvoiceBuilder::new(Currency::Bitcoin)
 				.amount_pico_btc(2500000000)
-				.timestamp_raw(1496314658)
+				.timestamp(UNIX_EPOCH + Duration::from_secs(1496314658))
 				.payment_hash(Sha256Hash::from_hex(
 					"0001020304050607080900010203040506070809000102030405060708090102"
 				).unwrap())
@@ -76,7 +76,7 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 			hhr8wpald05e92xw006sq94mg8v2ndf4sefvf9sygkshp5zfem29trqq2yxxz7".to_owned(),
 			InvoiceBuilder::new(Currency::Bitcoin)
 				.amount_pico_btc(20000000000)
-				.timestamp_raw(1496314658)
+				.timestamp(UNIX_EPOCH + Duration::from_secs(1496314658))
 				.payment_hash(Sha256Hash::from_hex(
 					"0001020304050607080900010203040506070809000102030405060708090102"
 				).unwrap())

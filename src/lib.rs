@@ -479,16 +479,6 @@ impl<D: tb::Bool, T: tb::Bool> InvoiceBuilder<D, tb::False, T> {
 }
 
 impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H, tb::False> {
-	/// Sets the timestamp. `time` is a UNIX timestamp.
-	pub fn timestamp_raw(mut self, time: u64) -> InvoiceBuilder<D, H, tb::True> {
-		match PositiveTimestamp::from_unix_timestamp(time) {
-			Ok(t) => self.timestamp = Some(t),
-			Err(e) => self.error = Some(e),
-		}
-
-		self.set_flags()
-	}
-
 	/// Sets the timestamp.
 	pub fn timestamp(mut self, time: SystemTime) -> InvoiceBuilder<D, H, tb::True> {
 		match PositiveTimestamp::from_system_time(time) {
@@ -1407,7 +1397,7 @@ mod test {
 
 		let builder = InvoiceBuilder::new(Currency::BitcoinTestnet)
 			.amount_pico_btc(123)
-			.timestamp_raw(1234567)
+			.timestamp(UNIX_EPOCH + Duration::from_secs(1234567))
 			.payee_pub_key(public_key.clone())
 			.expiry_time(Duration::from_secs(54321))
 			.min_final_cltv_expiry(144)
