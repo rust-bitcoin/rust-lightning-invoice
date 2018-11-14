@@ -43,6 +43,47 @@ fn __system_time_size_check() {
 }
 
 
+/// **Call this function on startup to ensure that all assumptions about the platform are valid.**
+///
+/// Unfortunately we have to make assumptions about the upper bounds of the `SystemTime` type on
+/// your platform which we can't fully verify at compile time and which isn't part of it's contract.
+/// To our best knowledge our assumptions hold for all platforms officially supported by rust, but
+/// since this check is fast we recommend to do it anyway.
+///
+/// If this function fails this is considered a bug. Please open an issue describing your
+/// platform and stating your current system time.
+///
+/// # Panics
+/// If the check fails this function panics. By calling this function on startup you ensure that
+/// this wont happen at an arbitrary later point in time.
+pub fn check_platform() {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    // The upper and lower bounds of `SystemTime` are not part of its public contract and are
+    // platform specific. That's why we have to test if our assumptions regarding these bounds
+    // hold on the target platform.
+    //
+    // If this test fails on your platform, please don't use the library and open an issue
+    // instead so we can resolve the situation. Currently this library is tested on:
+    //   * Linux (64bit)
+    let fail_date = UNIX_EPOCH + Duration::from_secs(SYSTEM_TIME_MAX_UNIX_TIMESTAMP);
+    let year = Duration::from_secs(60 * 60 * 24 * 365);
+
+    // Make sure that the library will keep working for another year
+    assert!(fail_date.duration_since(SystemTime::now()).unwrap() > year);
+
+    let max_ts = PositiveTimestamp::from_unix_timestamp(
+        SYSTEM_TIME_MAX_UNIX_TIMESTAMP - MAX_EXPIRY_TIME
+    ).unwrap();
+    let max_exp = ::ExpiryTime::from_seconds(MAX_EXPIRY_TIME).unwrap();
+
+    assert_eq!(
+        (*max_ts.as_time() + *max_exp.as_duration()).duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        SYSTEM_TIME_MAX_UNIX_TIMESTAMP
+    );
+}
+
+
 /// Builder for `Invoice`s. It's the most convenient and advised way to use this library. It ensures
 /// that only a semantically and syntactically correct Invoice can be built using it.
 ///
@@ -1126,30 +1167,7 @@ mod test {
 
 	#[test]
 	fn test_system_time_bounds_assumptions() {
-		use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-		// The upper and lower bounds of `SystemTime` are not part of its public contract and are
-		// platform specific. That's why we have to test if our assumptions regarding these bounds
-		// hold on the target platform.
-		//
-		// If this test fails on your platform, please don't use the library and open an issue
-		// instead so we can resolve the situation. Currently this library is tested on:
-		//   * Linux (64bit)
-		let fail_date = UNIX_EPOCH + Duration::from_secs(::SYSTEM_TIME_MAX_UNIX_TIMESTAMP);
-		let year = Duration::from_secs(60 * 60 * 24 * 365);
-
-		// Make sure that the library will keep working for another year
-		assert!(fail_date.duration_since(SystemTime::now()).unwrap() > year);
-
-        let max_ts = ::PositiveTimestamp::from_unix_timestamp(
-            ::SYSTEM_TIME_MAX_UNIX_TIMESTAMP - ::MAX_EXPIRY_TIME
-        ).unwrap();
-        let max_exp = ::ExpiryTime::from_seconds(::MAX_EXPIRY_TIME).unwrap();
-
-        assert_eq!(
-            (*max_ts.as_time() + *max_exp.as_duration()).duration_since(UNIX_EPOCH).unwrap().as_secs(),
-            ::SYSTEM_TIME_MAX_UNIX_TIMESTAMP
-        );
+		::check_platform();
 
         assert_eq!(
             ::PositiveTimestamp::from_unix_timestamp(::SYSTEM_TIME_MAX_UNIX_TIMESTAMP + 1),
