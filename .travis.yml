@@ -9,17 +9,18 @@ cache: cargo
 
 jobs:
   include:
-  - stage: test
-    script: cargo test
-  - stage: coverage
+  - stage: fuzz
+    before_install:
+      - sudo apt-get -qq update
+      - sudo apt-get install -y binutils-dev libunwind8-dev
     rust: stable
-    branches:
-      only:
-      - master
+    script: cd fuzz && cargo test --verbose && ./travis-fuzz.sh
+  - stage: coverage
+    if: branch = master
+    before_install:
+      - sudo apt-get -qq update
+      - sudo apt-get install cmake g++ pkg-config jq libcurl4-openssl-dev libelf-dev libdw-dev binutils-dev libiberty-dev
+      - cargo install -f cargo-kcov
+      - for i in {0..10}; do echo "retry $i"; (cargo kcov --print-install-kcov-sh | sh) && break; done
+    rust: stable
     script: bash .travis-kcov.sh
-
-before_install:
-  - sudo apt-get update
-  - sudo apt-get install cmake g++ pkg-config jq libcurl4-openssl-dev libelf-dev libdw-dev binutils-dev libiberty-dev
-  - cargo install cargo-kcov || true
-  - cargo kcov --print-install-kcov-sh | sh
