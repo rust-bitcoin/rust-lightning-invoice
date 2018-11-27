@@ -119,7 +119,7 @@ impl ToBase32<Vec<u5>> for RawDataPart {
 		let mut encoded = Vec::<u5>::new();
 
 		// encode timestamp
-		encoded.extend(&encode_int_be_base32(self.timestamp));
+		encoded.extend(self.timestamp.to_base32());
 
 		// encode tagged fields
 		for tagged_field in self.tagged_fields.iter() {
@@ -127,6 +127,13 @@ impl ToBase32<Vec<u5>> for RawDataPart {
 		}
 
 		encoded
+	}
+}
+
+impl ToBase32<Vec<u5>> for PositiveTimestamp {
+	fn to_base32(&self) -> Vec<u5> {
+		try_stretch(encode_int_be_base32(self.as_unix_timestamp()), 7)
+			.expect("Can't be longer due than 7 u5s due to timestamp bounds")
 	}
 }
 
@@ -163,7 +170,7 @@ impl ToBase32<Vec<u5>> for PayeePubKey {
 
 impl ToBase32<Vec<u5>> for ExpiryTime {
 	fn to_base32(&self) -> Vec<u5> {
-		encode_int_be_base32(self.seconds)
+		encode_int_be_base32(self.as_seconds())
 	}
 }
 
