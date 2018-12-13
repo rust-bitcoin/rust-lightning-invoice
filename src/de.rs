@@ -9,7 +9,7 @@ use bech32;
 use bech32::{Bech32, u5, FromBase32};
 
 use bitcoin_hashes::Hash;
-use bitcoin_hashes::sha256::Sha256Hash;
+use bitcoin_hashes::sha256;
 
 use num_traits::{CheckedAdd, CheckedMul};
 
@@ -444,7 +444,7 @@ impl FromBase32 for Sha256 {
 			// "A reader MUST skip over […] a p, [or] h […] field that does not have data_length 52 […]."
 			Err(ParseError::Skip)
 		} else {
-			Ok(Sha256(Sha256Hash::from_slice(&Vec::<u8>::from_base32(field_data)?)
+			Ok(Sha256(sha256::Hash::from_slice(&Vec::<u8>::from_base32(field_data)?)
 				.expect("length was checked before (52 u5 -> 32 u8)")))
 		}
 	}
@@ -719,7 +719,7 @@ mod test {
 	use secp256k1::{PublicKey, Secp256k1};
 	use bech32::u5;
 	use bitcoin_hashes::hex::FromHex;
-	use bitcoin_hashes::sha256::Sha256Hash;
+	use bitcoin_hashes::sha256;
 
 	const CHARSET_REV: [i8; 128] = [
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -767,7 +767,7 @@ mod test {
 			"qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypq".as_bytes()
 		);
 
-		let hash = Sha256Hash::from_hex(
+		let hash = sha256::Hash::from_hex(
 			"0001020304050607080900010203040506070809000102030405060708090102"
 		).unwrap();
 		let expected = Ok(Sha256(hash));
@@ -966,7 +966,7 @@ mod test {
 					data: RawDataPart {
 					timestamp: PositiveTimestamp::from_unix_timestamp(1496314658).unwrap(),
 					tagged_fields: vec ! [
-						PaymentHash(Sha256(Sha256Hash::from_hex(
+						PaymentHash(Sha256(sha256::Hash::from_hex(
 							"0001020304050607080900010203040506070809000102030405060708090102"
 						).unwrap())).into(),
 						Description(

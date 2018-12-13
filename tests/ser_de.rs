@@ -3,7 +3,7 @@ extern crate lightning_invoice;
 extern crate secp256k1;
 
 use bitcoin_hashes::hex::FromHex;
-use bitcoin_hashes::sha256::Sha256Hash;
+use bitcoin_hashes::sha256;
 use lightning_invoice::*;
 use secp256k1::{Secp256k1, RecoverableSignature, RecoveryId};
 use std::time::{Duration, UNIX_EPOCH};
@@ -18,7 +18,7 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 			ezhhypd0elx87sjle52x86fux2ypatgddc6k63n7erqz25le42c4u4ecky03ylcqca784w".to_owned(),
 			InvoiceBuilder::new(Currency::Bitcoin)
 				.timestamp(UNIX_EPOCH + Duration::from_secs(1496314658))
-				.payment_hash(Sha256Hash::from_hex(
+				.payment_hash(sha256::Hash::from_hex(
 						"0001020304050607080900010203040506070809000102030405060708090102"
 				).unwrap())
 				.description("Please consider supporting this project".to_owned())
@@ -47,7 +47,7 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 			InvoiceBuilder::new(Currency::Bitcoin)
 				.amount_pico_btc(2500000000)
 				.timestamp(UNIX_EPOCH + Duration::from_secs(1496314658))
-				.payment_hash(Sha256Hash::from_hex(
+				.payment_hash(sha256::Hash::from_hex(
 					"0001020304050607080900010203040506070809000102030405060708090102"
 				).unwrap())
 				.description("1 cup coffee".to_owned())
@@ -77,10 +77,10 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 			InvoiceBuilder::new(Currency::Bitcoin)
 				.amount_pico_btc(20000000000)
 				.timestamp(UNIX_EPOCH + Duration::from_secs(1496314658))
-				.payment_hash(Sha256Hash::from_hex(
+				.payment_hash(sha256::Hash::from_hex(
 					"0001020304050607080900010203040506070809000102030405060708090102"
 				).unwrap())
-				.description_hash(Sha256Hash::from_hex(
+				.description_hash(sha256::Hash::from_hex(
 					"3925b6f67e2c340036ed12093dd44e0368df1b6ea26c53dbe4811f58fd5db8c1"
 				).unwrap())
 				.build_raw()
