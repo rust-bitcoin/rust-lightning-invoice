@@ -14,7 +14,7 @@ use bitcoin_hashes::sha256;
 use num_traits::{CheckedAdd, CheckedMul};
 
 use secp256k1;
-use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
+use secp256k1::{RecoveryId, RecoverableSignature};
 use secp256k1::key::PublicKey;
 
 use super::*;
@@ -345,7 +345,6 @@ impl FromBase32 for Signature {
 		let recovery_id = RecoveryId::from_i32(recoverable_signature_bytes[64] as i32)?;
 
 		Ok(Signature(RecoverableSignature::from_compact(
-			&Secp256k1::without_caps(),
 			signature,
 			recovery_id
 		)?))
@@ -471,7 +470,7 @@ impl FromBase32 for PayeePubKey {
 			Err(ParseError::Skip)
 		} else {
 			let data_bytes = Vec::<u8>::from_base32(field_data)?;
-			let pub_key = PublicKey::from_slice(&Secp256k1::without_caps(), &data_bytes)?;
+			let pub_key = PublicKey::from_slice(&data_bytes)?;
 			Ok(pub_key.into())
 		}
 	}
@@ -568,7 +567,7 @@ impl FromBase32 for Route {
 			channel_id.copy_from_slice(&hop_bytes[33..41]);
 
 			let hop = RouteHop {
-				pubkey: PublicKey::from_slice(&Secp256k1::without_caps(), &hop_bytes[0..33])?,
+				pubkey: PublicKey::from_slice(&hop_bytes[0..33])?,
 				short_channel_id: channel_id,
 				fee_base_msat: parse_int_be(&hop_bytes[41..45], 256).expect("slice too big?"),
 				fee_proportional_millionths: parse_int_be(&hop_bytes[45..49], 256).expect("slice too big?"),
@@ -716,7 +715,7 @@ impl From<::SemanticError> for ParseOrSemanticError {
 #[cfg(test)]
 mod test {
 	use de::ParseError;
-	use secp256k1::{PublicKey, Secp256k1};
+	use secp256k1::PublicKey;
 	use bech32::u5;
 	use bitcoin_hashes::hex::FromHex;
 	use bitcoin_hashes::sha256;
@@ -803,7 +802,7 @@ mod test {
 			0x0f, 0x93, 0x4d, 0xd9, 0xad
 		];
 		let expected = Ok(PayeePubKey(
-			PublicKey::from_slice(&Secp256k1::without_caps(), &pk_bytes[..]).unwrap()
+			PublicKey::from_slice(&pk_bytes[..]).unwrap()
 		));
 
 		assert_eq!(PayeePubKey::from_base32(&input), expected);
@@ -910,7 +909,6 @@ mod test {
 		let mut expected = Vec::<RouteHop>::new();
 		expected.push(RouteHop {
 			pubkey: PublicKey::from_slice(
-				&Secp256k1::without_caps(),
 				&[
 					0x02u8, 0x9e, 0x03, 0xa9, 0x01, 0xb8, 0x55, 0x34, 0xff, 0x1e, 0x92, 0xc4, 0x3c,
 					0x74, 0x43, 0x1f, 0x7c, 0xe7, 0x20, 0x46, 0x06, 0x0f, 0xcf, 0x7a, 0x95, 0xc3,
@@ -924,7 +922,6 @@ mod test {
 		});
 		expected.push(RouteHop {
 			pubkey: PublicKey::from_slice(
-				&Secp256k1::without_caps(),
 				&[
 					0x03u8, 0x9e, 0x03, 0xa9, 0x01, 0xb8, 0x55, 0x34, 0xff, 0x1e, 0x92, 0xc4, 0x3c,
 					0x74, 0x43, 0x1f, 0x7c, 0xe7, 0x20, 0x46, 0x06, 0x0f, 0xcf, 0x7a, 0x95, 0xc3,
@@ -948,7 +945,7 @@ mod test {
 	#[test]
 	fn test_raw_signed_invoice_deserialization() {
 		use TaggedField::*;
-		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
+		use secp256k1::{RecoveryId, RecoverableSignature};
 		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
 			 PositiveTimestamp};
 
@@ -983,7 +980,6 @@ mod test {
 					0x83, 0x5d, 0xb2, 0xec, 0xd5, 0x18, 0xe1, 0xc9
 				],
 				signature: Signature(RecoverableSignature::from_compact(
-					& Secp256k1::without_caps(),
 					& [
 						0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
 						0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,

@@ -2,8 +2,6 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use bech32::{Bech32, ToBase32, u5};
 
-use secp256k1::Secp256k1;
-
 use ::*;
 
 impl Display for Invoice {
@@ -288,7 +286,7 @@ impl ToBase32<Vec<u5>> for TaggedField {
 
 impl ToBase32<Vec<u5>> for Signature {
 	fn to_base32(&self) -> Vec<u5> {
-		let (recovery_id, signature) = self.serialize_compact(&Secp256k1::without_caps());
+		let (recovery_id, signature) = self.serialize_compact();
 		let mut signature_bytes = Vec::<u8>::with_capacity(65);
 		signature_bytes.extend_from_slice(&signature[..]);
 		signature_bytes.push(recovery_id.to_i32() as u8); // can only be in range 0..4
