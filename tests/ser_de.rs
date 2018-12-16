@@ -5,7 +5,7 @@ extern crate secp256k1;
 use bitcoin_hashes::hex::FromHex;
 use bitcoin_hashes::sha256;
 use lightning_invoice::*;
-use secp256k1::{Secp256k1, RecoverableSignature, RecoveryId};
+use secp256k1::{RecoverableSignature, RecoveryId};
 use std::time::{Duration, UNIX_EPOCH};
 
 // TODO: add more of the examples from BOLT11 and generate ones causing SemanticErrors
@@ -26,7 +26,6 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 				.unwrap()
 				.sign(|_| {
 					RecoverableSignature::from_compact(
-						& Secp256k1::without_caps(),
 						& [
 							0x38u8, 0xec, 0x68, 0x91, 0x34, 0x5e, 0x20, 0x41, 0x45, 0xbe, 0x8a,
 							0x3a, 0x99, 0xde, 0x38, 0xe9, 0x8a, 0x39, 0xd6, 0xa5, 0x69, 0x43,
@@ -56,7 +55,6 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 				.unwrap()
 				.sign(|_| {
 					RecoverableSignature::from_compact(
-						& Secp256k1::without_caps(),
 						& [
 							0xe8, 0x96, 0x39, 0xba, 0x68, 0x14, 0xe3, 0x66, 0x89, 0xd4, 0xb9, 0x1b,
 							0xf1, 0x25, 0xf1, 0x03, 0x51, 0xb5, 0x5d, 0xa0, 0x57, 0xb0, 0x06, 0x47,
@@ -87,7 +85,6 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 				.unwrap()
 				.sign(|_| {
 					RecoverableSignature::from_compact(
-						& Secp256k1::without_caps(),
 						& [
 							0xc6, 0x34, 0x86, 0xe8, 0x1f, 0x8c, 0x87, 0x8a, 0x10, 0x5b, 0xc9, 0xd9,
 							0x59, 0xaf, 0x19, 0x73, 0x85, 0x4c, 0x4d, 0xc5, 0x52, 0xc4, 0xf0, 0xe0,
