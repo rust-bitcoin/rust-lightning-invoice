@@ -17,6 +17,7 @@
 
 extern crate bech32;
 extern crate bitcoin_hashes;
+extern crate bitcoin_constants;
 extern crate num_traits;
 extern crate secp256k1;
 
@@ -37,7 +38,7 @@ mod ser;
 mod tb;
 
 pub use de::{ParseError, ParseOrSemanticError};
-
+pub use bitcoin_constants::Network;
 
 // TODO: fix before 2037 (see rust PR #55527)
 /// Defines the maximum UNIX timestamp that can be represented as `SystemTime`. This is checked by
@@ -115,7 +116,7 @@ pub fn check_platform() {
 /// use secp256k1::Secp256k1;
 /// use secp256k1::key::SecretKey;
 ///
-/// use lightning_invoice::{Currency, InvoiceBuilder};
+/// use lightning_invoice::{InvoiceBuilder, Network};
 ///
 /// # fn main() {
 /// let private_key = SecretKey::from_slice(
@@ -128,7 +129,7 @@ pub fn check_platform() {
 ///
 /// let payment_hash = sha256::Hash::from_slice(&[0; 32][..]).unwrap();
 ///
-/// let invoice = InvoiceBuilder::new(Currency::Bitcoin)
+/// let invoice = InvoiceBuilder::new(Network::bitcoin())
 /// 	.description("Coins pls!".into())
 /// 	.payment_hash(payment_hash)
 /// 	.current_timestamp()
@@ -149,7 +150,7 @@ pub fn check_platform() {
 ///  * `T`: the timestamp is set
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct InvoiceBuilder<D: tb::Bool, H: tb::Bool, T: tb::Bool> {
-	currency: Currency,
+	currency: Network,
 	amount: Option<u64>,
 	si_prefix: Option<SiPrefix>,
 	timestamp: Option<PositiveTimestamp>,
@@ -224,7 +225,7 @@ pub struct RawInvoice {
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RawHrp {
 	/// The currency deferred from the 3rd and 4th character of the bech32 transaction
-	pub currency: Currency,
+	pub currency: Network,
 
 	/// The amount that, multiplied by the SI prefix, has to be payed
 	pub raw_amount: Option<u64>,
@@ -284,14 +285,6 @@ impl SiPrefix {
 		static VALUES: [SiPrefix; 4] = [Milli, Micro, Nano, Pico];
 		&VALUES
 	}
-}
-
-/// Enum representing the crypto currencies supported by this library
-#[allow(missing_docs)]
-#[derive(Eq, PartialEq, Debug, Clone)]
-pub enum Currency {
-	Bitcoin,
-	BitcoinTestnet,
 }
 
 /// Tagged field which may have an unknown tag
@@ -408,7 +401,7 @@ pub mod constants {
 impl InvoiceBuilder<tb::False, tb::False, tb::False> {
 	/// Construct new, empty `InvoiceBuilder`. All necessary fields have to be filled first before
 	/// `InvoiceBuilder::build(self)` becomes available.
-	pub fn new(currrency: Currency) -> Self {
+	pub fn new(currrency: Network) -> Self {
 		InvoiceBuilder {
 			currency: currrency,
 			amount: None,
@@ -823,8 +816,8 @@ impl RawInvoice {
 		})
 	}
 
-	pub fn currency(&self) -> Currency {
-		self.hrp.currency.clone()
+	pub fn currency(&self) -> &Network {
+		&self.hrp.currency
 	}
 }
 
@@ -1011,7 +1004,7 @@ impl Invoice {
 	}
 
 	/// Returns the currency for which the invoice was issued
-	pub fn currency(&self) -> Currency {
+	pub fn currency(&self) -> &Network {
 		self.signed_invoice.currency()
 	}
 
@@ -1245,12 +1238,12 @@ mod test {
 
 	#[test]
 	fn test_calc_invoice_hash() {
-		use ::{RawInvoice, RawHrp, RawDataPart, Currency, PositiveTimestamp};
+		use ::{RawInvoice, RawHrp, RawDataPart, Network, PositiveTimestamp};
 		use ::TaggedField::*;
 
 		let invoice = RawInvoice {
 			hrp: RawHrp {
-				currency: Currency::Bitcoin,
+				currency: Network::bitcoin(),
 				raw_amount: None,
 				si_prefix: None,
 			},
@@ -1281,13 +1274,13 @@ mod test {
 		use TaggedField::*;
 		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
 		use secp256k1::key::{SecretKey, PublicKey};
-		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
+		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Network, Sha256,
 			 PositiveTimestamp};
 
 		let invoice = SignedRawInvoice {
 			raw_invoice: RawInvoice {
 				hrp: RawHrp {
-					currency: Currency::Bitcoin,
+					currency: Network::bitcoin(),
 					raw_amount: None,
 					si_prefix: None,
 				},
@@ -1348,7 +1341,7 @@ mod test {
 	fn test_builder_amount() {
 		use ::*;
 
-		let builder = InvoiceBuilder::new(Currency::Bitcoin)
+		let builder = InvoiceBuilder::new(Network::bitcoin())
 			.description("Test".into())
 			.payment_hash(sha256::Hash::from_slice(&[0;32][..]).unwrap())
 			.current_timestamp();
@@ -1377,7 +1370,7 @@ mod test {
 		use std::iter::FromIterator;
 		use secp256k1::key::PublicKey;
 
-		let builder = InvoiceBuilder::new(Currency::Bitcoin)
+		let builder = InvoiceBuilder::new(Network::bitcoin())
 			.payment_hash(sha256::Hash::from_slice(&[0;32][..]).unwrap())
 			.current_timestamp();
 
@@ -1470,7 +1463,7 @@ mod test {
 			}
 		];
 
-		let builder = InvoiceBuilder::new(Currency::BitcoinTestnet)
+		let builder = InvoiceBuilder::new(Network::bitcoin_testnet())
 			.amount_pico_btc(123)
 			.timestamp(UNIX_EPOCH + Duration::from_secs(1234567))
 			.payee_pub_key(public_key.clone())
@@ -1491,7 +1484,7 @@ mod test {
 		assert_eq!(invoice.tagged_fields().count(), 9);
 
 		assert_eq!(invoice.amount_pico_btc(), Some(123));
-		assert_eq!(invoice.currency(), Currency::BitcoinTestnet);
+		assert_eq!(invoice.currency(), &Network::bitcoin_testnet());
 		assert_eq!(
 			invoice.timestamp().duration_since(UNIX_EPOCH).unwrap().as_secs(),
 			1234567

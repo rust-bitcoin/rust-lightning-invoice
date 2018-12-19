@@ -8,6 +8,8 @@ use std::str::FromStr;
 use bech32;
 use bech32::{Bech32, u5, FromBase32};
 
+use bitcoin_constants::{BitcoinNetworks, SupportedNetworks};
+
 use bitcoin_hashes::Hash;
 use bitcoin_hashes::sha256;
 
@@ -170,19 +172,6 @@ mod hrp_sm {
 	}
 }
 
-
-impl FromStr for super::Currency {
-	type Err = ParseError;
-
-	fn from_str(currency_prefix: &str) -> Result<Self, ParseError> {
-		match currency_prefix {
-			"bc" => Ok(Currency::Bitcoin),
-			"tb" => Ok(Currency::BitcoinTestnet),
-			_ => Err(ParseError::UnknownCurrency)
-		}
-	}
-}
-
 impl FromStr for SiPrefix {
 	type Err = ParseError;
 
@@ -271,7 +260,9 @@ impl FromStr for RawHrp {
 	fn from_str(hrp: &str) -> Result<Self, <Self as FromStr>::Err> {
 		let parts = parse_hrp(hrp)?;
 
-		let currency = parts.0.parse::<Currency>()?;
+		let currency = BitcoinNetworks::networks_iter()
+			.find(|n| n.hrp() == parts.0)
+			.ok_or(ParseError::UnknownCurrency)?;
 
 		let amount = if !parts.1.is_empty() {
 			Some(parts.1.parse::<u64>()?)
@@ -739,15 +730,6 @@ mod test {
 	}
 
 	#[test]
-	fn test_parse_currency_prefix() {
-		use Currency;
-
-		assert_eq!("bc".parse::<Currency>(), Ok(Currency::Bitcoin));
-		assert_eq!("tb".parse::<Currency>(), Ok(Currency::BitcoinTestnet));
-		assert_eq!("something_else".parse::<Currency>(), Err(ParseError::UnknownCurrency))
-	}
-
-	#[test]
 	fn test_parse_int_from_bytes_be() {
 		use de::parse_int_be;
 
@@ -946,7 +928,7 @@ mod test {
 	fn test_raw_signed_invoice_deserialization() {
 		use TaggedField::*;
 		use secp256k1::{RecoveryId, RecoverableSignature};
-		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
+		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Network, Sha256,
 			 PositiveTimestamp};
 
 		assert_eq!(
@@ -956,7 +938,7 @@ mod test {
 			Ok(SignedRawInvoice {
 				raw_invoice: RawInvoice {
 					hrp: RawHrp {
-						currency: Currency::Bitcoin,
+						currency: Network::bitcoin(),
 						raw_amount: None,
 						si_prefix: None,
 					},

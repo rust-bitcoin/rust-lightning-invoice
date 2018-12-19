@@ -35,20 +35,10 @@ impl Display for RawHrp {
 		write!(
 			f,
 			"ln{}{}{}",
-			self.currency,
+			self.currency.hrp(),
 			amount,
 			si_prefix
 		)
-	}
-}
-
-impl Display for Currency {
-	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-		let currency_code = match *self {
-			Currency::Bitcoin => "bc",
-			Currency::BitcoinTestnet => "tb",
-		};
-		write!(f, "{}", currency_code)
 	}
 }
 
@@ -300,19 +290,11 @@ mod test {
 	use bech32::CheckBase32;
 
 	#[test]
-	fn test_currency_code() {
-		use Currency;
-
-		assert_eq!("bc", Currency::Bitcoin.to_string());
-		assert_eq!("tb", Currency::BitcoinTestnet.to_string());
-	}
-
-	#[test]
 	fn test_raw_hrp() {
-		use ::{Currency, RawHrp, SiPrefix};
+		use ::{Network, RawHrp, SiPrefix};
 
 		let hrp = RawHrp {
-			currency: Currency::Bitcoin,
+			currency: Network::bitcoin(),
 			raw_amount: Some(100),
 			si_prefix: Some(SiPrefix::Micro),
 		};
