@@ -112,99 +112,94 @@ fn try_stretch<T>(mut in_vec: Vec<T>, target_len: usize) -> Option<Vec<T>>
 	}
 }
 
-impl ToBase32<Vec<u5>> for RawDataPart {
-	fn to_base32(&self) -> Vec<u5> {
-		let mut encoded = Vec::<u5>::new();
-
-		// encode timestamp
-		encoded.extend(self.timestamp.to_base32());
+impl ToBase32 for RawDataPart {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
+		buffer.extend(self.timestamp.to_base32());
 
 		// encode tagged fields
 		for tagged_field in self.tagged_fields.iter() {
-			encoded.extend_from_slice(&tagged_field.to_base32());
+			buffer.extend_from_slice(&tagged_field.to_base32());
 		}
-
-		encoded
 	}
 }
 
-impl ToBase32<Vec<u5>> for PositiveTimestamp {
+impl ToBase32 for PositiveTimestamp {
 	fn to_base32(&self) -> Vec<u5> {
 		try_stretch(encode_int_be_base32(self.as_unix_timestamp()), 7)
-			.expect("Can't be longer due than 7 u5s due to timestamp bounds")
+			.expect("Can't be longer than 7 u5s due to timestamp bounds")
+	}
+
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
+		buffer.extend_from_slice(&self.to_base32())
 	}
 }
 
-impl ToBase32<Vec<u5>> for RawTaggedField {
-	fn to_base32(&self) -> Vec<u5> {
+impl ToBase32 for RawTaggedField {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
 		match *self {
 			RawTaggedField::UnknownSemantics(ref content) => {
-				content.clone()
+				buffer.extend_from_slice(&content);
 			},
 			RawTaggedField::KnownSemantics(ref tagged_field) => {
-				tagged_field.to_base32()
+				tagged_field.write_base32(buffer)
 			}
 		}
 	}
 }
 
-impl ToBase32<Vec<u5>> for Sha256 {
-	fn to_base32(&self) -> Vec<u5> {
-		(&self.0[..]).to_base32()
+impl ToBase32 for Sha256 {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
+		(&self.0[..]).write_base32(buffer);
 	}
 }
 
-impl ToBase32<Vec<u5>> for Description {
-	fn to_base32(&self) -> Vec<u5> {
-		self.as_bytes().to_base32()
+impl ToBase32 for Description {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
+		self.0.as_bytes().write_base32(buffer);
 	}
 }
 
-impl ToBase32<Vec<u5>> for PayeePubKey {
-	fn to_base32(&self) -> Vec<u5> {
-		(&self.serialize()[..]).to_base32()
+impl ToBase32 for PayeePubKey {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
+		(&self.0.serialize()[..]).write_base32(buffer);
 	}
 }
 
-impl ToBase32<Vec<u5>> for ExpiryTime {
-	fn to_base32(&self) -> Vec<u5> {
-		encode_int_be_base32(self.as_seconds())
+impl ToBase32 for ExpiryTime {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
+		// TODO: check if length is guaranteed to be sufficient
+		buffer.extend_from_slice(&encode_int_be_base32(self.as_seconds()));
 	}
 }
 
-impl ToBase32<Vec<u5>> for MinFinalCltvExpiry {
-	fn to_base32(&self) -> Vec<u5> {
-		encode_int_be_base32(self.0)
+impl ToBase32 for MinFinalCltvExpiry {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
+		// TODO: check if length is guaranteed to be sufficient
+		buffer.extend_from_slice(&encode_int_be_base32(self.0));
 	}
 }
 
-impl ToBase32<Vec<u5>> for Fallback {
-	fn to_base32(&self) -> Vec<u5> {
+impl ToBase32 for Fallback {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
 		match *self {
 			Fallback::SegWitProgram {version: v, program: ref p} => {
-				let mut data = Vec::<u5>::with_capacity(1);
-				data.push(v);
-				data.extend_from_slice(&p.to_base32());
-				data
+				buffer.push(v);
+				p.write_base32(buffer);
 			},
 			Fallback::PubKeyHash(ref hash) => {
-				let mut data = Vec::<u5>::with_capacity(1 + 32);
-				data.push(u5::try_from_u8(17).unwrap());
-				data.extend_from_slice(&hash.to_base32());
-				data
+				buffer.push(u5::try_from_u8(17).unwrap());
+				(&hash[..]).write_base32(buffer);
 			},
 			Fallback::ScriptHash(ref hash) => {
-				let mut data = Vec::<u5>::with_capacity(1 + 32);
-				data.push(u5::try_from_u8(18).unwrap());
-				data.extend_from_slice(&hash.to_base32());
-				data
+				buffer.push(u5::try_from_u8(18).unwrap());
+				(&hash[..]).write_base32(buffer);
 			}
 		}
 	}
 }
 
-impl ToBase32<Vec<u5>> for Route {
-	fn to_base32(&self) -> Vec<u5> {
+impl ToBase32 for Route {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
 		let mut bytes = Vec::<u8>::new();
 		for hop in self.iter() {
 			bytes.extend_from_slice(&hop.pubkey.serialize()[..]);
@@ -235,63 +230,75 @@ impl ToBase32<Vec<u5>> for Route {
 			"One hop is 51 bytes long, so all hops should be a multiple of that long."
 		);
 
-		bytes.to_base32()
+		bytes.write_base32(buffer);
 	}
 }
 
-impl ToBase32<Vec<u5>> for TaggedField {
-	fn to_base32(&self) -> Vec<u5> {
-		let (tag, data) = match *self {
+impl ToBase32 for TaggedField {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
+		// Serialize a tagged filed to a buffer
+		fn write_tagged_field<T: ToBase32>(buffer: &mut Vec<u5>, tag: u8, data: &T) {
+			buffer.push(u5::try_from_u8(tag).expect("tag has to be <32"));
+
+			// Save the index of the first length byte for writing to it later on
+			let len_idx = buffer.len();
+
+			// Write placeholder for payload length field
+			let placeholder = u5::try_from_u8(0).unwrap();
+			buffer.extend_from_slice(&[placeholder, placeholder]);
+
+			// Write and measure length of payload
+			let len_begin = buffer.len();
+			data.write_base32(buffer);
+			let payload_len = buffer.len() - len_begin;
+
+			// Replace payload length placeholder with real payload length
+			let payload_len_enc = try_stretch(
+				encode_int_be_base32(payload_len as u64),
+				2
+			).expect("Every tagged field data can be at most 1023 bytes long.");
+
+			buffer[len_idx..len_idx+2].clone_from_slice(&payload_len_enc);
+		}
+
+		match *self {
 			TaggedField::PaymentHash(ref hash) => {
-				(constants::TAG_PAYMENT_HASH, hash.to_base32())
+				write_tagged_field(buffer, constants::TAG_PAYMENT_HASH, hash);
 			},
 			TaggedField::Description(ref description) => {
-				(constants::TAG_DESCRIPTION, description.to_base32())
+				write_tagged_field(buffer, constants::TAG_DESCRIPTION, description);
 			},
 			TaggedField::PayeePubKey(ref pub_key) => {
-				(constants::TAG_PAYEE_PUB_KEY, pub_key.to_base32())
+				write_tagged_field(buffer, constants::TAG_PAYEE_PUB_KEY, pub_key);
 			},
 			TaggedField::DescriptionHash(ref hash) => {
-				(constants::TAG_DESCRIPTION_HASH, hash.to_base32())
+				write_tagged_field(buffer, constants::TAG_DESCRIPTION_HASH, hash);
 			},
 			TaggedField::ExpiryTime(ref duration) => {
-				(constants::TAG_EXPIRY_TIME, duration.to_base32())
+				write_tagged_field(buffer, constants::TAG_EXPIRY_TIME, duration);
 			},
 			TaggedField::MinFinalCltvExpiry(ref expiry) => {
-				(constants::TAG_MIN_FINAL_CLTV_EXPIRY, expiry.to_base32())
+				write_tagged_field(buffer, constants::TAG_MIN_FINAL_CLTV_EXPIRY, expiry);
 			},
 			TaggedField::Fallback(ref fallback_address) => {
-				(constants::TAG_FALLBACK, fallback_address.to_base32())
+				write_tagged_field(buffer, constants::TAG_FALLBACK, fallback_address);
 			},
 			TaggedField::Route(ref route_hops) => {
-				(constants::TAG_ROUTE, route_hops.to_base32())
+				write_tagged_field(buffer, constants::TAG_ROUTE, route_hops)
 			},
 		};
-
-		assert!(data.len() < 1024, "Every tagged field data can be at most 1023 bytes long.");
-
-		let mut sized_data = Vec::<u5>::with_capacity(data.len() + 3);
-		sized_data.push(u5::try_from_u8(tag).expect("Tags should be <32."));
-		sized_data.extend_from_slice(
-			&try_stretch(
-				encode_int_be_base32(data.len() as u64),
-				2
-			).expect("Can't be longer than 2, see assert above.")
-		);
-		sized_data.extend_from_slice(&data);
-
-		sized_data
 	}
 }
 
-impl ToBase32<Vec<u5>> for Signature {
-	fn to_base32(&self) -> Vec<u5> {
+impl ToBase32 for Signature {
+	fn write_base32(&self, buffer: &mut Vec<u5>) {
 		let (recovery_id, signature) = self.serialize_compact();
-		let mut signature_bytes = Vec::<u8>::with_capacity(65);
-		signature_bytes.extend_from_slice(&signature[..]);
-		signature_bytes.push(recovery_id.to_i32() as u8); // can only be in range 0..4
 
-		signature_bytes.to_base32()
+		let mut signature_bytes = [0u8; 65];
+		signature_bytes[..64].clone_from_slice(&signature[..]);
+		signature_bytes[64] = recovery_id.to_i32() as u8; // can only be in range 0..4
+
+		(&signature_bytes[..]).write_base32(buffer)
 	}
 }
 

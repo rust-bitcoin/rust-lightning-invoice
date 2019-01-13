@@ -10,7 +10,7 @@ keywords = [ "lightning", "bitcoin", "invoice", "BOLT11" ]
 readme = "README.md"
 
 [dependencies]
-bech32 = "0.6.0"
+bech32 = {git="https://github.com/sgeisler/rust-bech32", branch="to_base_buffer"}
 secp256k1 = "0.12"
 num-traits = "0.2"
 bitcoin_hashes = "0.3"
