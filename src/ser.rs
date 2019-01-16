@@ -121,6 +121,12 @@ impl ToBase32 for RawDataPart {
 			buffer.extend_from_slice(&tagged_field.to_base32());
 		}
 	}
+
+	fn serialized_length(&self) -> usize {
+		let a = self.timestamp.serialized_length();
+		let b: usize = self.tagged_fields.iter().map(|tf| tf.serialized_length()).sum();
+		a + b
+	}
 }
 
 impl ToBase32 for PositiveTimestamp {
@@ -131,6 +137,10 @@ impl ToBase32 for PositiveTimestamp {
 
 	fn write_base32(&self, buffer: &mut Vec<u5>) {
 		buffer.extend_from_slice(&self.to_base32())
+	}
+
+	fn serialized_length(&self) -> usize {
+		7
 	}
 }
 
@@ -145,11 +155,22 @@ impl ToBase32 for RawTaggedField {
 			}
 		}
 	}
+
+	fn serialized_length(&self) -> usize {
+		match *self {
+			RawTaggedField::UnknownSemantics(ref content) => content.len(),
+			RawTaggedField::KnownSemantics(ref tf) => tf.serialized_length(),
+		}
+	}
 }
 
 impl ToBase32 for Sha256 {
 	fn write_base32(&self, buffer: &mut Vec<u5>) {
 		(&self.0[..]).write_base32(buffer);
+	}
+
+	fn serialized_length(&self) -> usize {
+		(&self.0[..]).serialized_length()
 	}
 }
 
@@ -157,25 +178,39 @@ impl ToBase32 for Description {
 	fn write_base32(&self, buffer: &mut Vec<u5>) {
 		self.0.as_bytes().write_base32(buffer);
 	}
+
+	fn serialized_length(&self) -> usize {
+		self.0.as_bytes().serialized_length()
+	}
 }
 
 impl ToBase32 for PayeePubKey {
 	fn write_base32(&self, buffer: &mut Vec<u5>) {
 		(&self.0.serialize()[..]).write_base32(buffer);
 	}
+
+	fn serialized_length(&self) -> usize {
+		(&self.0.serialize()[..]).serialized_length()
+	}
 }
 
 impl ToBase32 for ExpiryTime {
 	fn write_base32(&self, buffer: &mut Vec<u5>) {
-		// TODO: check if length is guaranteed to be sufficient
 		buffer.extend_from_slice(&encode_int_be_base32(self.as_seconds()));
+	}
+
+	fn serialized_length(&self) -> usize {
+		var_int_u5s(self.as_seconds())
 	}
 }
 
 impl ToBase32 for MinFinalCltvExpiry {
 	fn write_base32(&self, buffer: &mut Vec<u5>) {
-		// TODO: check if length is guaranteed to be sufficient
 		buffer.extend_from_slice(&encode_int_be_base32(self.0));
+	}
+
+	fn serialized_length(&self) -> usize {
+		var_int_u5s(self.0)
 	}
 }
 
@@ -194,6 +229,20 @@ impl ToBase32 for Fallback {
 				buffer.push(u5::try_from_u8(18).unwrap());
 				(&hash[..]).write_base32(buffer);
 			}
+		}
+	}
+
+	fn serialized_length(&self) -> usize {
+		1 + match *self {
+			Fallback::SegWitProgram {version: _, program: ref p} => {
+				p.serialized_length()
+			},
+			Fallback::PubKeyHash(ref hash) => {
+				(&hash[..]).serialized_length()
+			},
+			Fallback::ScriptHash(ref hash) => {
+				(&hash[..]).serialized_length()
+			},
 		}
 	}
 }
@@ -232,6 +281,16 @@ impl ToBase32 for Route {
 
 		bytes.write_base32(buffer);
 	}
+
+	fn serialized_length(&self) -> usize {
+		let bytes = self.len() * 51;
+		let bits = bytes * 8;
+		if bits % 5 == 0 {
+			bits / 5
+		} else {
+			bits / 5 + 1
+		}
+	}
 }
 
 impl ToBase32 for TaggedField {
@@ -243,22 +302,14 @@ impl ToBase32 for TaggedField {
 			// Save the index of the first length byte for writing to it later on
 			let len_idx = buffer.len();
 
-			// Write placeholder for payload length field
-			let placeholder = u5::try_from_u8(0).unwrap();
-			buffer.extend_from_slice(&[placeholder, placeholder]);
+			// Write payload length
+			buffer.extend_from_slice(
+				&try_stretch(encode_int_be_base32(data.serialized_length() as u64), 2)
+					.expect("length of tagged fields is max. 1023")
+			);
 
-			// Write and measure length of payload
-			let len_begin = buffer.len();
+			// Write payload
 			data.write_base32(buffer);
-			let payload_len = buffer.len() - len_begin;
-
-			// Replace payload length placeholder with real payload length
-			let payload_len_enc = try_stretch(
-				encode_int_be_base32(payload_len as u64),
-				2
-			).expect("Every tagged field data can be at most 1023 bytes long.");
-
-			buffer[len_idx..len_idx+2].clone_from_slice(&payload_len_enc);
 		}
 
 		match *self {
@@ -288,6 +339,20 @@ impl ToBase32 for TaggedField {
 			},
 		};
 	}
+
+	fn serialized_length(&self) -> usize {
+		// TODO: write trait object getter to avoid redundant matches
+		3 + match *self {
+			TaggedField::PaymentHash(ref hash) => hash.serialized_length(),
+			TaggedField::Description(ref description) => description.serialized_length(),
+			TaggedField::PayeePubKey(ref pub_key) => pub_key.serialized_length(),
+			TaggedField::DescriptionHash(ref hash) => hash.serialized_length(),
+			TaggedField::ExpiryTime(ref duration) => duration.serialized_length(),
+			TaggedField::MinFinalCltvExpiry(ref expiry) => expiry.serialized_length(),
+			TaggedField::Fallback(ref fallback_address) => fallback_address.serialized_length(),
+			TaggedField::Route(ref route_hops) => route_hops.serialized_length(),
+		}
+	}
 }
 
 impl ToBase32 for Signature {
@@ -299,6 +364,41 @@ impl ToBase32 for Signature {
 		signature_bytes[64] = recovery_id.to_i32() as u8; // can only be in range 0..4
 
 		(&signature_bytes[..]).write_base32(buffer)
+	}
+
+	fn serialized_length(&self) -> usize {
+		104
+	}
+}
+
+/// Find the highest set bit (ceil(log(num))), `num` may not be zero.
+///
+/// # Panics
+/// If `num` is zero.
+fn max_set_bit(num: u64) -> u8 {
+	debug_assert_ne!(num, 0);
+
+	let mut bitmask = 0x80_00_00_00__00_00_00_00;
+	let mut bit_num = 64;
+
+	while num & bitmask == 0 {
+		bitmask >>= 1;
+		bit_num -= 1;
+	}
+
+	bit_num
+}
+
+fn var_int_u5s(num: u64) -> usize {
+	if num == 0 {
+		return 1;
+	}
+
+	let bits = max_set_bit(num) as usize;
+	if bits % 5 == 0 {
+		bits / 5
+	} else {
+		bits / 5 + 1
 	}
 }
 
@@ -345,5 +445,37 @@ mod test {
 		let expected_out = vec![1, 0, 255, 34];
 
 		assert_eq!(expected_out, encode_int_be_base256(input));
+	}
+
+	#[test]
+	fn test_highest_bit() {
+		let test_vectors = &[
+			(123u64, 7usize),
+			(456, 9),
+			(8, 4),
+			(1, 1),
+			(2, 2),
+			(3, 2),
+			(4, 3),
+		];
+
+		for (num, bits) in test_vectors {
+			assert_eq!(super::max_set_bit(*num) as usize, *bits);
+		}
+	}
+
+	#[test]
+	fn test_int_encode_length() {
+		let test_vectors = &[
+			(25u64, 1usize),
+			(40, 2),
+			(1023, 2),
+			(1024, 3),
+			(0, 1),
+		];
+
+		for (num, u5s) in test_vectors {
+			assert_eq!(super::var_int_u5s(*num), *u5s);
+		}
 	}
 }
