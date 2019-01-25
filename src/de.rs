@@ -242,7 +242,7 @@ impl FromStr for SignedRawInvoice {
 	type Err = ParseError;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		let (hrp, data) = Bech32::from_str_lenient(s)?.into_parts();
+		let (hrp, data) = Bech32::from_str(s)?.into_parts();
 
 		if data.len() < 104 {
 			return Err(ParseError::TooShortDataPart);

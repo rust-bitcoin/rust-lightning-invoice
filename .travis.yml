@@ -4,7 +4,7 @@ rust:
   - nightly
   - beta
   - stable
-  - 1.14.0 # rustc on debian stable
+  - 1.22.0 # min. supported rust version
 cache: cargo
 
 jobs:
