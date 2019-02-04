@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use bech32::{Bech32, ToBase32, u5};
+use bech32::{Bech32, ToBase32, WriteBase32, u5};
 
 use ::*;
 
@@ -113,12 +113,12 @@ fn try_stretch<T>(mut in_vec: Vec<T>, target_len: usize) -> Option<Vec<T>>
 }
 
 impl ToBase32 for RawDataPart {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
-		buffer.extend(self.timestamp.to_base32());
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
+		buffer.write_all(&self.timestamp.to_base32());
 
 		// encode tagged fields
 		for tagged_field in self.tagged_fields.iter() {
-			buffer.extend_from_slice(&tagged_field.to_base32());
+			tagged_field.write_base32(buffer);
 		}
 	}
 
@@ -135,8 +135,8 @@ impl ToBase32 for PositiveTimestamp {
 			.expect("Can't be longer than 7 u5s due to timestamp bounds")
 	}
 
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
-		buffer.extend_from_slice(&self.to_base32())
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
+		buffer.write_all(&self.to_base32())
 	}
 
 	fn serialized_length(&self) -> usize {
@@ -145,13 +145,13 @@ impl ToBase32 for PositiveTimestamp {
 }
 
 impl ToBase32 for RawTaggedField {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
 		match *self {
 			RawTaggedField::UnknownSemantics(ref content) => {
-				buffer.extend_from_slice(&content);
+				buffer.write_all(&content);
 			},
 			RawTaggedField::KnownSemantics(ref tagged_field) => {
-				tagged_field.write_base32(buffer)
+				tagged_field.write_base32(buffer);
 			}
 		}
 	}
@@ -165,7 +165,7 @@ impl ToBase32 for RawTaggedField {
 }
 
 impl ToBase32 for Sha256 {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
 		(&self.0[..]).write_base32(buffer);
 	}
 
@@ -175,7 +175,7 @@ impl ToBase32 for Sha256 {
 }
 
 impl ToBase32 for Description {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
 		self.0.as_bytes().write_base32(buffer);
 	}
 
@@ -185,7 +185,7 @@ impl ToBase32 for Description {
 }
 
 impl ToBase32 for PayeePubKey {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
 		(&self.0.serialize()[..]).write_base32(buffer);
 	}
 
@@ -195,8 +195,8 @@ impl ToBase32 for PayeePubKey {
 }
 
 impl ToBase32 for ExpiryTime {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
-		buffer.extend_from_slice(&encode_int_be_base32(self.as_seconds()));
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
+		buffer.write_all(&encode_int_be_base32(self.as_seconds()));
 	}
 
 	fn serialized_length(&self) -> usize {
@@ -205,8 +205,8 @@ impl ToBase32 for ExpiryTime {
 }
 
 impl ToBase32 for MinFinalCltvExpiry {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
-		buffer.extend_from_slice(&encode_int_be_base32(self.0));
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
+		buffer.write_all(&encode_int_be_base32(self.0));
 	}
 
 	fn serialized_length(&self) -> usize {
@@ -215,18 +215,18 @@ impl ToBase32 for MinFinalCltvExpiry {
 }
 
 impl ToBase32 for Fallback {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
 		match *self {
 			Fallback::SegWitProgram {version: v, program: ref p} => {
-				buffer.push(v);
+				buffer.write_all(&[v]);
 				p.write_base32(buffer);
 			},
 			Fallback::PubKeyHash(ref hash) => {
-				buffer.push(u5::try_from_u8(17).unwrap());
+				buffer.write_all(&[u5::try_from_u8(17).unwrap()]);
 				(&hash[..]).write_base32(buffer);
 			},
 			Fallback::ScriptHash(ref hash) => {
-				buffer.push(u5::try_from_u8(18).unwrap());
+				buffer.write_all(&[u5::try_from_u8(18).unwrap()]);
 				(&hash[..]).write_base32(buffer);
 			}
 		}
@@ -248,7 +248,7 @@ impl ToBase32 for Fallback {
 }
 
 impl ToBase32 for Route {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
 		let mut bytes = Vec::<u8>::new();
 		for hop in self.iter() {
 			bytes.extend_from_slice(&hop.pubkey.serialize()[..]);
@@ -294,16 +294,13 @@ impl ToBase32 for Route {
 }
 
 impl ToBase32 for TaggedField {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
 		// Serialize a tagged filed to a buffer
-		fn write_tagged_field<T: ToBase32>(buffer: &mut Vec<u5>, tag: u8, data: &T) {
-			buffer.push(u5::try_from_u8(tag).expect("tag has to be <32"));
-
-			// Save the index of the first length byte for writing to it later on
-			let len_idx = buffer.len();
+		fn write_tagged_field<T: ToBase32, WI: WriteBase32>(buffer: &mut WI, tag: u8, data: &T) {
+			buffer.write_all(&[u5::try_from_u8(tag).expect("tag has to be <32")]);
 
 			// Write payload length
-			buffer.extend_from_slice(
+			buffer.write_all(
 				&try_stretch(encode_int_be_base32(data.serialized_length() as u64), 2)
 					.expect("length of tagged fields is max. 1023")
 			);
@@ -356,7 +353,7 @@ impl ToBase32 for TaggedField {
 }
 
 impl ToBase32 for Signature {
-	fn write_base32(&self, buffer: &mut Vec<u5>) {
+	fn write_base32<W: WriteBase32>(&self, buffer: &mut W) {
 		let (recovery_id, signature) = self.serialize_compact();
 
 		let mut signature_bytes = [0u8; 65];
