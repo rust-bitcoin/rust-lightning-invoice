@@ -966,8 +966,8 @@ impl Invoice {
 	}
 
 	/// Returns the hash to which we will receive the preimage on completion of the payment
-	pub fn payment_hash(&self) -> &Sha256 {
-		self.signed_invoice.payment_hash().expect("checked by constructor")
+	pub fn payment_hash(&self) -> &sha256::Hash {
+		&self.signed_invoice.payment_hash().expect("checked by constructor").0
 	}
 
 	/// Return the description or a hash of it for longer ones
@@ -981,23 +981,23 @@ impl Invoice {
 	}
 
 	/// Get the payee's public key if one was included in the invoice
-	pub fn payee_pub_key(&self) -> Option<&PayeePubKey> {
-		self.signed_invoice.payee_pub_key()
+	pub fn payee_pub_key(&self) -> Option<&PublicKey> {
+		self.signed_invoice.payee_pub_key().map(|x| &x.0)
 	}
 
 	/// Recover the payee's public key (only to be used if none was included in the invoice)
-	pub fn recover_payee_pub_key(&self) -> PayeePubKey {
-		self.signed_invoice.recover_payee_pub_key().expect("was checked by constructor")
+	pub fn recover_payee_pub_key(&self) -> PublicKey {
+		self.signed_invoice.recover_payee_pub_key().expect("was checked by constructor").0
 	}
 
 	/// Returns the invoice's expiry time if present
-	pub fn expiry_time(&self) -> Option<&ExpiryTime> {
-		self.signed_invoice.expiry_time()
+	pub fn expiry_time(&self) -> Option<&Duration> {
+		self.signed_invoice.expiry_time().map(|x| &x.0)
 	}
 
 	/// Returns the invoice's `min_cltv_expiry` time if present
-	pub fn min_final_cltv_expiry(&self) -> Option<&MinFinalCltvExpiry> {
-		self.signed_invoice.min_final_cltv_expiry()
+	pub fn min_final_cltv_expiry(&self) -> Option<&u64> {
+		self.signed_invoice.min_final_cltv_expiry().map(|x| &x.0)
 	}
 
 	/// Returns a list of all fallback addresses
@@ -1496,16 +1496,16 @@ mod test {
 			invoice.timestamp().duration_since(UNIX_EPOCH).unwrap().as_secs(),
 			1234567
 		);
-		assert_eq!(invoice.payee_pub_key(), Some(&PayeePubKey(public_key)));
-		assert_eq!(invoice.expiry_time(), Some(&ExpiryTime::from_seconds(54321).unwrap()));
-		assert_eq!(invoice.min_final_cltv_expiry(), Some(&MinFinalCltvExpiry(144)));
+		assert_eq!(invoice.payee_pub_key(), Some(&public_key));
+		assert_eq!(invoice.expiry_time(), Some(&Duration::from_secs(54321)));
+		assert_eq!(invoice.min_final_cltv_expiry(), Some(&144));
 		assert_eq!(invoice.fallbacks(), vec![&Fallback::PubKeyHash([0;20])]);
 		assert_eq!(invoice.routes(), vec![&Route(route_1), &Route(route_2)]);
 		assert_eq!(
 			invoice.description(),
 			InvoiceDescription::Hash(&Sha256(sha256::Hash::from_slice(&[3;32][..]).unwrap()))
 		);
-		assert_eq!(invoice.payment_hash(), &Sha256(sha256::Hash::from_slice(&[21;32][..]).unwrap()));
+		assert_eq!(invoice.payment_hash(), &sha256::Hash::from_slice(&[21;32][..]).unwrap());
 
 		let raw_invoice = builder.build_raw().unwrap();
 		assert_eq!(raw_invoice, *invoice.into_signed_raw().raw_invoice())
