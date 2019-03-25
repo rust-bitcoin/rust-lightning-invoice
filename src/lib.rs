@@ -992,8 +992,10 @@ impl Invoice {
 	}
 
 	/// Returns the invoice's expiry time if present
-	pub fn expiry_time(&self) -> Option<&Duration> {
-		self.signed_invoice.expiry_time().map(|x| &x.0)
+	pub fn expiry_time(&self) -> Duration {
+		self.signed_invoice.expiry_time()
+			.map(|x| x.0)
+			.unwrap_or(Duration::from_secs(3600))
 	}
 
 	/// Returns the invoice's `min_cltv_expiry` time if present
@@ -1498,7 +1500,7 @@ mod test {
 			1234567
 		);
 		assert_eq!(invoice.payee_pub_key(), Some(&public_key));
-		assert_eq!(invoice.expiry_time(), Some(&Duration::from_secs(54321)));
+		assert_eq!(invoice.expiry_time(), Duration::from_secs(54321));
 		assert_eq!(invoice.min_final_cltv_expiry(), Some(&144));
 		assert_eq!(invoice.fallbacks(), vec![&Fallback::PubKeyHash([0;20])]);
 		assert_eq!(invoice.routes(), vec![&Route(route_1), &Route(route_2)]);
