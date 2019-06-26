@@ -178,6 +178,7 @@ impl FromStr for super::Currency {
 		match currency_prefix {
 			"bc" => Ok(Currency::Bitcoin),
 			"tb" => Ok(Currency::BitcoinTestnet),
+			"bcrt" => Ok(Currency::Regtest),
 			_ => Err(ParseError::UnknownCurrency)
 		}
 	}
@@ -744,6 +745,7 @@ mod test {
 
 		assert_eq!("bc".parse::<Currency>(), Ok(Currency::Bitcoin));
 		assert_eq!("tb".parse::<Currency>(), Ok(Currency::BitcoinTestnet));
+		assert_eq!("bcrt".parse::<Currency>(), Ok(Currency::Regtest));
 		assert_eq!("something_else".parse::<Currency>(), Err(ParseError::UnknownCurrency))
 	}
 
