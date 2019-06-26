@@ -292,6 +292,7 @@ impl SiPrefix {
 pub enum Currency {
 	Bitcoin,
 	BitcoinTestnet,
+	Regtest,
 }
 
 /// Tagged field which may have an unknown tag
