@@ -25,7 +25,8 @@ use bitcoin_hashes::Hash;
 use bitcoin_hashes::sha256;
 
 use secp256k1::key::PublicKey;
-use secp256k1::{Message, RecoverableSignature, Secp256k1};
+use secp256k1::{Message, Secp256k1};
+use secp256k1::recovery::RecoverableSignature;
 use std::ops::Deref;
 
 use std::iter::FilterMap;
@@ -74,8 +75,6 @@ fn __system_time_size_check() {
 /// If the check fails this function panics. By calling this function on startup you ensure that
 /// this wont happen at an arbitrary later point in time.
 pub fn check_platform() {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
     // The upper and lower bounds of `SystemTime` are not part of its public contract and are
     // platform specific. That's why we have to test if our assumptions regarding these bounds
     // hold on the target platform.
@@ -561,7 +560,6 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H, tb::False> {
 
 	/// Sets the timestamp to the current UNIX timestamp.
 	pub fn current_timestamp(mut self) -> InvoiceBuilder<D, H, tb::True> {
-		use std::time::SystemTime;
 		let now = PositiveTimestamp::from_system_time(SystemTime::now());
 		self.timestamp = Some(now.expect("for the foreseeable future this shouldn't happen"));
 		self.set_flags()
@@ -1282,7 +1280,8 @@ mod test {
 	#[test]
 	fn test_check_signature() {
 		use TaggedField::*;
-		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
+		use secp256k1::Secp256k1;
+		use secp256k1::recovery::{RecoveryId, RecoverableSignature};
 		use secp256k1::key::{SecretKey, PublicKey};
 		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
 			 PositiveTimestamp};
