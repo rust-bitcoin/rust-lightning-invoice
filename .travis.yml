@@ -16,7 +16,7 @@ jobs:
     rust: stable
     script: cd fuzz && cargo test --verbose && ./travis-fuzz.sh
   - stage: coverage
-    if: branch = master
+    if: type = cron || type = push
     before_install:
       - sudo apt-get -qq update
       - sudo apt-get install cmake g++ pkg-config jq libcurl4-openssl-dev libelf-dev libdw-dev binutils-dev libiberty-dev

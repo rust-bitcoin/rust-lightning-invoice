@@ -5,7 +5,7 @@ extern crate secp256k1;
 use bitcoin_hashes::hex::FromHex;
 use bitcoin_hashes::sha256;
 use lightning_invoice::*;
-use secp256k1::{RecoverableSignature, RecoveryId};
+use secp256k1::recovery::{RecoverableSignature, RecoveryId};
 use std::time::{Duration, UNIX_EPOCH};
 
 // TODO: add more of the examples from BOLT11 and generate ones causing SemanticErrors

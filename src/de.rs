@@ -14,7 +14,7 @@ use bitcoin_hashes::sha256;
 use num_traits::{CheckedAdd, CheckedMul};
 
 use secp256k1;
-use secp256k1::{RecoveryId, RecoverableSignature};
+use secp256k1::recovery::{RecoveryId, RecoverableSignature};
 use secp256k1::key::PublicKey;
 
 use super::*;
@@ -178,6 +178,7 @@ impl FromStr for super::Currency {
 		match currency_prefix {
 			"bc" => Ok(Currency::Bitcoin),
 			"tb" => Ok(Currency::BitcoinTestnet),
+			"bcrt" => Ok(Currency::Regtest),
 			_ => Err(ParseError::UnknownCurrency)
 		}
 	}
@@ -744,6 +745,7 @@ mod test {
 
 		assert_eq!("bc".parse::<Currency>(), Ok(Currency::Bitcoin));
 		assert_eq!("tb".parse::<Currency>(), Ok(Currency::BitcoinTestnet));
+		assert_eq!("bcrt".parse::<Currency>(), Ok(Currency::Regtest));
 		assert_eq!("something_else".parse::<Currency>(), Err(ParseError::UnknownCurrency))
 	}
 
@@ -945,7 +947,7 @@ mod test {
 	#[test]
 	fn test_raw_signed_invoice_deserialization() {
 		use TaggedField::*;
-		use secp256k1::{RecoveryId, RecoverableSignature};
+		use secp256k1::recovery::{RecoveryId, RecoverableSignature};
 		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
 			 PositiveTimestamp};
 

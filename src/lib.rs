@@ -25,7 +25,8 @@ use bitcoin_hashes::Hash;
 use bitcoin_hashes::sha256;
 
 use secp256k1::key::PublicKey;
-use secp256k1::{Message, RecoverableSignature, Secp256k1};
+use secp256k1::{Message, Secp256k1};
+use secp256k1::recovery::RecoverableSignature;
 use std::ops::Deref;
 
 use std::iter::FilterMap;
@@ -74,8 +75,6 @@ fn __system_time_size_check() {
 /// If the check fails this function panics. By calling this function on startup you ensure that
 /// this wont happen at an arbitrary later point in time.
 pub fn check_platform() {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
     // The upper and lower bounds of `SystemTime` are not part of its public contract and are
     // platform specific. That's why we have to test if our assumptions regarding these bounds
     // hold on the target platform.
@@ -292,6 +291,7 @@ impl SiPrefix {
 pub enum Currency {
 	Bitcoin,
 	BitcoinTestnet,
+	Regtest,
 }
 
 /// Tagged field which may have an unknown tag
@@ -560,7 +560,6 @@ impl<D: tb::Bool, H: tb::Bool> InvoiceBuilder<D, H, tb::False> {
 
 	/// Sets the timestamp to the current UNIX timestamp.
 	pub fn current_timestamp(mut self) -> InvoiceBuilder<D, H, tb::True> {
-		use std::time::SystemTime;
 		let now = PositiveTimestamp::from_system_time(SystemTime::now());
 		self.timestamp = Some(now.expect("for the foreseeable future this shouldn't happen"));
 		self.set_flags()
@@ -966,8 +965,8 @@ impl Invoice {
 	}
 
 	/// Returns the hash to which we will receive the preimage on completion of the payment
-	pub fn payment_hash(&self) -> &Sha256 {
-		self.signed_invoice.payment_hash().expect("checked by constructor")
+	pub fn payment_hash(&self) -> &sha256::Hash {
+		&self.signed_invoice.payment_hash().expect("checked by constructor").0
 	}
 
 	/// Return the description or a hash of it for longer ones
@@ -981,23 +980,25 @@ impl Invoice {
 	}
 
 	/// Get the payee's public key if one was included in the invoice
-	pub fn payee_pub_key(&self) -> Option<&PayeePubKey> {
-		self.signed_invoice.payee_pub_key()
+	pub fn payee_pub_key(&self) -> Option<&PublicKey> {
+		self.signed_invoice.payee_pub_key().map(|x| &x.0)
 	}
 
 	/// Recover the payee's public key (only to be used if none was included in the invoice)
-	pub fn recover_payee_pub_key(&self) -> PayeePubKey {
-		self.signed_invoice.recover_payee_pub_key().expect("was checked by constructor")
+	pub fn recover_payee_pub_key(&self) -> PublicKey {
+		self.signed_invoice.recover_payee_pub_key().expect("was checked by constructor").0
 	}
 
 	/// Returns the invoice's expiry time if present
-	pub fn expiry_time(&self) -> Option<&ExpiryTime> {
+	pub fn expiry_time(&self) -> Duration {
 		self.signed_invoice.expiry_time()
+			.map(|x| x.0)
+			.unwrap_or(Duration::from_secs(3600))
 	}
 
 	/// Returns the invoice's `min_cltv_expiry` time if present
-	pub fn min_final_cltv_expiry(&self) -> Option<&MinFinalCltvExpiry> {
-		self.signed_invoice.min_final_cltv_expiry()
+	pub fn min_final_cltv_expiry(&self) -> Option<&u64> {
+		self.signed_invoice.min_final_cltv_expiry().map(|x| &x.0)
 	}
 
 	/// Returns a list of all fallback addresses
@@ -1279,7 +1280,8 @@ mod test {
 	#[test]
 	fn test_check_signature() {
 		use TaggedField::*;
-		use secp256k1::{RecoveryId, RecoverableSignature, Secp256k1};
+		use secp256k1::Secp256k1;
+		use secp256k1::recovery::{RecoveryId, RecoverableSignature};
 		use secp256k1::key::{SecretKey, PublicKey};
 		use {SignedRawInvoice, Signature, RawInvoice, RawHrp, RawDataPart, Currency, Sha256,
 			 PositiveTimestamp};
@@ -1496,16 +1498,16 @@ mod test {
 			invoice.timestamp().duration_since(UNIX_EPOCH).unwrap().as_secs(),
 			1234567
 		);
-		assert_eq!(invoice.payee_pub_key(), Some(&PayeePubKey(public_key)));
-		assert_eq!(invoice.expiry_time(), Some(&ExpiryTime::from_seconds(54321).unwrap()));
-		assert_eq!(invoice.min_final_cltv_expiry(), Some(&MinFinalCltvExpiry(144)));
+		assert_eq!(invoice.payee_pub_key(), Some(&public_key));
+		assert_eq!(invoice.expiry_time(), Duration::from_secs(54321));
+		assert_eq!(invoice.min_final_cltv_expiry(), Some(&144));
 		assert_eq!(invoice.fallbacks(), vec![&Fallback::PubKeyHash([0;20])]);
 		assert_eq!(invoice.routes(), vec![&Route(route_1), &Route(route_2)]);
 		assert_eq!(
 			invoice.description(),
 			InvoiceDescription::Hash(&Sha256(sha256::Hash::from_slice(&[3;32][..]).unwrap()))
 		);
-		assert_eq!(invoice.payment_hash(), &Sha256(sha256::Hash::from_slice(&[21;32][..]).unwrap()));
+		assert_eq!(invoice.payment_hash(), &sha256::Hash::from_slice(&[21;32][..]).unwrap());
 
 		let raw_invoice = builder.build_raw().unwrap();
 		assert_eq!(raw_invoice, *invoice.into_signed_raw().raw_invoice())
