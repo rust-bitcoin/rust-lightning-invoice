@@ -10,10 +10,10 @@ keywords = [ "lightning", "bitcoin", "invoice", "BOLT11" ]
 readme = "README.md"
 
 [dependencies]
-bech32 = "0.6.0"
-secp256k1 = { version = "0.14.1", features = ["recovery"] }
+bech32 = "0.7"
+secp256k1 = { version = "0.15", features = ["recovery"] }
 num-traits = "0.2.8"
-bitcoin_hashes = "0.6.0"
+bitcoin_hashes = "0.7"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

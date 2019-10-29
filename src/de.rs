@@ -6,7 +6,7 @@ use std::str;
 use std::str::FromStr;
 
 use bech32;
-use bech32::{Bech32, u5, FromBase32};
+use bech32::{u5, FromBase32};
 
 use bitcoin_hashes::Hash;
 use bitcoin_hashes::sha256;
@@ -243,7 +243,7 @@ impl FromStr for SignedRawInvoice {
 	type Err = ParseError;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		let (hrp, data) = Bech32::from_str(s)?.into_parts();
+		let (hrp, data) = bech32::decode(s)?;
 
 		if data.len() < 104 {
 			return Err(ParseError::TooShortDataPart);
