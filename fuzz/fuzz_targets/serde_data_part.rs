@@ -11,10 +11,10 @@ fn do_test(data: &[u8]) {
         Err(_) => return,
     };
 
-    /// Our encoding is not worse than the input
+    // Our encoding is not worse than the input
     assert!(invoice.to_base32().len() <= bech32.len());
 
-    /// Our serialization is loss-less
+    // Our serialization is loss-less
     assert_eq!(
         RawDataPart::from_base32(&invoice.to_base32()).expect("faild parsing out own encoding"),
         invoice
