@@ -285,8 +285,7 @@ impl SiPrefix {
 	}
 }
 
-/// Enum representing the crypto currencies supported by this library
-#[allow(missing_docs)]
+/// Enum representing the crypto currencies (or networks) supported by this library
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Currency {
 	/// Bitcoin mainnet
@@ -298,7 +297,7 @@ pub enum Currency {
 	/// Bitcoin regtest
 	Regtest,
 
-	/// Bitcoin (`btcd`) simnet
+	/// Bitcoin simnet/signet
 	Simnet,
 }
 
