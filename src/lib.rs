@@ -289,9 +289,17 @@ impl SiPrefix {
 #[allow(missing_docs)]
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Currency {
+	/// Bitcoin mainnet
 	Bitcoin,
+
+	/// Bitcoin testnet
 	BitcoinTestnet,
+
+	/// Bitcoin regtest
 	Regtest,
+
+	/// Bitcoin (`btcd`) simnet
+	Simnet,
 }
 
 /// Tagged field which may have an unknown tag

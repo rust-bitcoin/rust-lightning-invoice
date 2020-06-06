@@ -179,6 +179,7 @@ impl FromStr for super::Currency {
 			"bc" => Ok(Currency::Bitcoin),
 			"tb" => Ok(Currency::BitcoinTestnet),
 			"bcrt" => Ok(Currency::Regtest),
+			"sb" => Ok(Currency::Simnet),
 			_ => Err(ParseError::UnknownCurrency)
 		}
 	}
@@ -746,6 +747,7 @@ mod test {
 		assert_eq!("bc".parse::<Currency>(), Ok(Currency::Bitcoin));
 		assert_eq!("tb".parse::<Currency>(), Ok(Currency::BitcoinTestnet));
 		assert_eq!("bcrt".parse::<Currency>(), Ok(Currency::Regtest));
+		assert_eq!("sb".parse::<Currency>(), Ok(Currency::Simnet));
 		assert_eq!("something_else".parse::<Currency>(), Err(ParseError::UnknownCurrency))
 	}
 
