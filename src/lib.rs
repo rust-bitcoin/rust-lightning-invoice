@@ -32,13 +32,13 @@ use std::ops::Deref;
 use std::iter::FilterMap;
 use std::slice::Iter;
 use std::time::{SystemTime, Duration, UNIX_EPOCH};
+use std::fmt::{Display, Formatter, self};
 
 mod de;
 mod ser;
 mod tb;
 
 pub use de::{ParseError, ParseOrSemanticError};
-
 
 // TODO: fix before 2037 (see rust PR #55527)
 /// Defines the maximum UNIX timestamp that can be represented as `SystemTime`. This is checked by
@@ -1197,6 +1197,19 @@ pub enum CreationError {
 	ExpiryTimeOutOfBounds,
 }
 
+impl Display for CreationError {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		match self {
+			CreationError::DescriptionTooLong => f.write_str("The supplied description string was longer than 639 bytes"),
+			CreationError::RouteTooLong => f.write_str("The specified route has too many hops and can't be encoded"),
+			CreationError::TimestampOutOfBounds => f.write_str("The unix timestamp of the supplied date is <0 or can't be represented as `SystemTime`"),
+			CreationError::ExpiryTimeOutOfBounds => f.write_str("The supplied expiry time could cause an overflow if added to a `PositiveTimestamp`"),
+		}
+	}
+}
+
+impl std::error::Error for CreationError { }
+
 /// Errors that may occur when converting a `RawInvoice` to an `Invoice`. They relate to the
 /// requirements sections in BOLT #11
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -1220,6 +1233,21 @@ pub enum SemanticError {
 	InvalidSignature,
 }
 
+impl Display for SemanticError {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		match self {
+			SemanticError::NoPaymentHash => f.write_str("The invoice is missing the mandatory payment hash"),
+			SemanticError::MultiplePaymentHashes => f.write_str("The invoice has multiple payment hashes which isn't allowed"),
+			SemanticError::NoDescription => f.write_str("No description or description hash are part of the invoice"),
+			SemanticError::MultipleDescriptions => f.write_str("The invoice contains multiple descriptions and/or description hashes which isn't allowed"),
+			SemanticError::InvalidRecoveryId => f.write_str("The recovery id doesn't fit the signature/pub key"),
+			SemanticError::InvalidSignature => f.write_str("The invoice's signature is invalid"),
+		}
+	}
+}
+
+impl std::error::Error for SemanticError { }
+
 /// When signing using a fallible method either an user-supplied `SignError` or a `CreationError`
 /// may occur.
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -1229,6 +1257,15 @@ pub enum SignOrCreationError<S> {
 
 	/// An error occurred while building the transaction
 	CreationError(CreationError),
+}
+
+impl<S> Display for SignOrCreationError<S> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		match self {
+			SignOrCreationError::SignError(_) => f.write_str("An error occurred during signing"),
+			SignOrCreationError::CreationError(err) => err.fmt(f),
+		}
+	}
 }
 
 #[cfg(test)]
