@@ -652,6 +652,15 @@ impl Display for ParseError {
 	}
 }
 
+impl Display for ParseOrSemanticError {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		match self {
+			ParseOrSemanticError::ParseError(err) => err.fmt(f),
+			ParseOrSemanticError::SemanticError(err) => err.fmt(f),
+		}
+	}
+}
+
 impl error::Error for ParseError {
 	fn description(&self) -> &str {
 		use self::ParseError::*;
@@ -678,6 +687,8 @@ impl error::Error for ParseError {
 		}
 	}
 }
+
+impl error::Error for ParseOrSemanticError {}
 
 macro_rules! from_error {
     ($my_error:expr, $extern_error:ty) => {
