@@ -626,28 +626,55 @@ pub enum ParseOrSemanticError {
 
 impl Display for ParseError {
 	fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-		use self::ParseError::*;
-		use std::error::Error;
 		match *self {
 			// TODO: find a way to combine the first three arms (e as error::Error?)
-			Bech32Error(ref e) => {
-				write!(f, "{} ({})", self.description(), e)
+			ParseError::Bech32Error(ref e) => {
+				write!(f, "Invalid bech32: {}", e)
 			}
-			ParseAmountError(ref e) => {
-				write!(f, "{} ({})", self.description(), e)
+			ParseError::ParseAmountError(ref e) => {
+				write!(f, "Invalid amount in hrp ({})", e)
 			}
-			MalformedSignature(ref e) => {
-				write!(f, "{} ({})", self.description(), e)
+			ParseError::MalformedSignature(ref e) => {
+				write!(f, "Invalid secp256k1 signature: {}", e)
 			}
-			DescriptionDecodeError(ref e) => {
-				write!(f, "{} ({})", self.description(), e)
+			ParseError::DescriptionDecodeError(ref e) => {
+				write!(f, "Description is not a valid utf-8 string: {}", e)
 			}
-			InvalidSliceLength(ref function) => {
-				write!(f, "{} (in function {})", self.description(), function)
+			ParseError::InvalidSliceLength(ref function) => {
+				write!(f, "Slice in function {} had the wrong length", function)
 			}
-			_ => {
-				write!(f, "{}", self.description())
-			}
+			ParseError::BadPrefix => f.write_str("did not begin with 'ln'"),
+			ParseError::UnknownCurrency => f.write_str("currency code unknown"),
+			ParseError::UnknownSiPrefix => f.write_str("unknown SI prefix"),
+			ParseError::MalformedHRP => f.write_str("malformed human readable part"),
+			ParseError::TooShortDataPart => {
+				f.write_str("data part too short (should be at least 111 bech32 chars long)")
+			},
+			ParseError::UnexpectedEndOfTaggedFields => {
+				f.write_str("tagged fields part ended unexpectedly")
+			},
+			ParseError::PaddingError => f.write_str("some data field had bad padding"),
+			ParseError::IntegerOverflowError => {
+				f.write_str("parsed integer doesn't fit into receiving type")
+			},
+			ParseError::InvalidSegWitProgramLength => {
+				f.write_str("fallback SegWit program is too long or too short")
+			},
+			ParseError::InvalidPubKeyHashLength => {
+				f.write_str("fallback public key hash has a length unequal 20 bytes")
+			},
+			ParseError::InvalidScriptHashLength => {
+				f.write_str("fallback script hash has a length unequal 32 bytes")
+			},
+			ParseError::InvalidRecoveryId => {
+				f.write_str("recovery id is out of range (should be in [0,3])")
+			},
+			ParseError::Skip => {
+				f.write_str("the tagged field has to be skipped because of an unexpected, but allowed property")
+			},
+			ParseError::TimestampOverflow => {
+                f.write_str("the invoice's timestamp could not be represented as SystemTime")
+            },
 		}
 	}
 }
@@ -661,32 +688,7 @@ impl Display for ParseOrSemanticError {
 	}
 }
 
-impl error::Error for ParseError {
-	fn description(&self) -> &str {
-		use self::ParseError::*;
-		match *self {
-			Bech32Error(_) => "invalid bech32",
-			ParseAmountError(_) => "invalid amount in hrp",
-			MalformedSignature(_) => "invalid secp256k1 signature",
-			BadPrefix => "did not begin with 'ln'",
-			UnknownCurrency => "currency code unknown",
-			UnknownSiPrefix => "unknown SI prefix",
-			MalformedHRP => "malformed human readable part",
-			TooShortDataPart => "data part too short (should be at least 111 bech32 chars long)",
-			UnexpectedEndOfTaggedFields => "tagged fields part ended unexpectedly",
-			DescriptionDecodeError(_) => "description is no valid utf-8 string",
-			PaddingError => "some data field had bad padding",
-			IntegerOverflowError => "parsed integer doesn't fit into receiving type",
-			InvalidSegWitProgramLength => "fallback SegWit program is too long or too short",
-			InvalidPubKeyHashLength => "fallback public key hash has a length unequal 20 bytes",
-			InvalidScriptHashLength => "fallback script hash has a length unequal 32 bytes",
-			InvalidRecoveryId => "recovery id is out of range (should be in [0,3])",
-			InvalidSliceLength(_) => "some slice had the wrong length",
-			Skip => "the tagged field has to be skipped because of an unexpected, but allowed property",
-			TimestampOverflow => "the invoice's timestamp could not be represented as SystemTime",
-		}
-	}
-}
+impl error::Error for ParseError {}
 
 impl error::Error for ParseOrSemanticError {}
 
