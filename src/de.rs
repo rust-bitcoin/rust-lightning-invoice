@@ -516,7 +516,7 @@ impl FromBase32 for Fallback {
 		let bytes = Vec::<u8>::from_base32(&field_data[1..])?;
 
 		match version.to_u8() {
-			0...16 => {
+			0..=16 => {
 				if bytes.len() < 2 || bytes.len() > 40 {
 					return Err(ParseError::InvalidSegWitProgramLength);
 				}
