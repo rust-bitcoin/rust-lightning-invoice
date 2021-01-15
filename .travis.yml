@@ -4,11 +4,16 @@ rust:
   - nightly
   - beta
   - stable
-  - 1.22.0 # min. supported rust version
 cache: cargo
 
 jobs:
   include:
+  - rust: 1.29.0
+    script:
+      - cargo generate-lockfile --verbose
+      - cargo update -p cc --precise "1.0.41" --verbose
+      - cargo build
+      - cargo test
   - stage: fuzz
     before_install:
       - sudo apt-get -qq update
