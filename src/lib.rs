@@ -324,6 +324,7 @@ pub enum TaggedField {
 	MinFinalCltvExpiry(MinFinalCltvExpiry),
 	Fallback(Fallback),
 	Route(Route),
+	PaymentSecret(PaymentSecret),
 }
 
 /// SHA-256 hash
@@ -340,6 +341,10 @@ pub struct Description(String);
 /// Payee public key
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct PayeePubKey(pub PublicKey);
+
+/// 256-bit payment secret
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub struct PaymentSecret(pub [u8; 32]);
 
 /// Positive duration that defines when (relatively to the timestamp) in the future the invoice
 /// expires
@@ -410,6 +415,7 @@ pub mod constants {
 	pub const TAG_MIN_FINAL_CLTV_EXPIRY: u8 = 24;
 	pub const TAG_FALLBACK: u8 = 9;
 	pub const TAG_ROUTE: u8 = 3;
+	pub const TAG_PAYMENT_SECRET: u8 = 16;
 }
 
 impl InvoiceBuilder<tb::False, tb::False, tb::False> {
@@ -462,6 +468,12 @@ impl<D: tb::Bool, H: tb::Bool, T: tb::Bool> InvoiceBuilder<D, H, T> {
 	/// Sets the payee's public key.
 	pub fn payee_pub_key(mut self, pub_key: PublicKey) -> Self {
 		self.tagged_fields.push(TaggedField::PayeePubKey(PayeePubKey(pub_key)));
+		self
+	}
+
+	/// Sets the payment secret
+	pub fn payment_secret(mut self, payment_secret: PaymentSecret) -> Self {
+		self.tagged_fields.push(TaggedField::PaymentSecret(payment_secret));
 		self
 	}
 
@@ -809,6 +821,10 @@ impl RawInvoice {
 		find_extract!(self.known_tagged_fields(), TaggedField::MinFinalCltvExpiry(ref x), x)
 	}
 
+	pub fn payment_secret(&self) -> Option<&PaymentSecret> {
+		find_extract!(self.known_tagged_fields(), TaggedField::PaymentSecret(ref x), x)
+	}
+
 	pub fn fallbacks(&self) -> Vec<&Fallback> {
 		self.known_tagged_fields().filter_map(|tf| match tf {
 			&TaggedField::Fallback(ref f) => Some(f),
@@ -991,6 +1007,11 @@ impl Invoice {
 		self.signed_invoice.payee_pub_key().map(|x| &x.0)
 	}
 
+    /// Get the payment secret if one was included in the invoice
+    pub fn payment_secret(&self) -> Option<&PaymentSecret> {
+        self.signed_invoice.payment_secret()
+    }
+
 	/// Recover the payee's public key (only to be used if none was included in the invoice)
 	pub fn recover_payee_pub_key(&self) -> PublicKey {
 		self.signed_invoice.recover_payee_pub_key().expect("was checked by constructor").0
@@ -1047,6 +1068,7 @@ impl TaggedField {
 			TaggedField::MinFinalCltvExpiry(_) => constants::TAG_MIN_FINAL_CLTV_EXPIRY,
 			TaggedField::Fallback(_) => constants::TAG_FALLBACK,
 			TaggedField::Route(_) => constants::TAG_ROUTE,
+			TaggedField::PaymentSecret(_) => constants::TAG_PAYMENT_SECRET,
 		};
 
 		u5::try_from_u8(tag).expect("all tags defined are <32")
@@ -1271,7 +1293,7 @@ impl<S> Display for SignOrCreationError<S> {
 #[cfg(test)]
 mod test {
 	use bitcoin_hashes::hex::FromHex;
-	use bitcoin_hashes::{Hash, sha256};
+	use bitcoin_hashes::sha256;
 
 	#[test]
 	fn test_system_time_bounds_assumptions() {

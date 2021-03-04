@@ -5,6 +5,8 @@ extern crate secp256k1;
 use bitcoin_hashes::hex::FromHex;
 use bitcoin_hashes::sha256;
 use lightning_invoice::*;
+use secp256k1::Secp256k1;
+use secp256k1::key::SecretKey;
 use secp256k1::recovery::{RecoverableSignature, RecoveryId};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -96,6 +98,25 @@ fn get_test_tuples() -> Vec<(String, SignedRawInvoice, Option<SemanticError>)> {
 						RecoveryId::from_i32(0).unwrap()
 					)
 				}).unwrap(),
+			None
+		),
+		(
+			"lnbc20m1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5vdhkven9v5sxyetpdeessp59g4z52329g4z52329g4z52329g4z52329g4z52329g4z52329g4q9gkzyrw8zhfxmrcxsx7hj40yejq6lkvn75l9yjmapjv94haz8x8jy2tvmgex8rnyqkj825csd2t64fu0p4ctad2cf4tgy5gh2fns6ygp6pnc3y".to_owned(),
+			InvoiceBuilder::new(Currency::Bitcoin)
+				.payment_hash(sha256::Hash::from_hex(
+					"0001020304050607080900010203040506070809000102030405060708090102"
+				).unwrap())
+				.description("coffee beans".to_string())
+				.amount_pico_btc(20000000000)
+				.timestamp(UNIX_EPOCH + Duration::from_secs(1496314658))
+				.payment_secret(PaymentSecret([42; 32]))
+				.build_signed(|msg_hash| {
+					let privkey = SecretKey::from_slice(&[41; 32]).unwrap();
+					let secp_ctx = Secp256k1::new();
+					secp_ctx.sign_recoverable(msg_hash, &privkey)
+				})
+				.unwrap()
+				.into_signed_raw(),
 			None
 		)
 	]
