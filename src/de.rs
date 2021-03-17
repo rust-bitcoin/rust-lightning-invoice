@@ -429,6 +429,8 @@ impl FromBase32 for TaggedField {
 				Ok(TaggedField::Fallback(Fallback::from_base32(field_data)?)),
 			constants::TAG_ROUTE =>
 				Ok(TaggedField::Route(Route::from_base32(field_data)?)),
+			constants::TAG_PAYMENT_SECRET =>
+				Ok(TaggedField::PaymentSecret(PaymentSecret::from_base32(field_data)?)),
 			_ => {
 				// "A reader MUST skip over unknown fields"
 				Err(ParseError::Skip)
@@ -474,6 +476,21 @@ impl FromBase32 for PayeePubKey {
 			let data_bytes = Vec::<u8>::from_base32(field_data)?;
 			let pub_key = PublicKey::from_slice(&data_bytes)?;
 			Ok(pub_key.into())
+		}
+	}
+}
+
+impl FromBase32 for PaymentSecret {
+	type Err = ParseError;
+
+	fn from_base32(field_data: &[u5]) -> Result<PaymentSecret, ParseError> {
+		if field_data.len() != 52 {
+			Err(ParseError::Skip)
+		} else {
+			let data_bytes = Vec::<u8>::from_base32(field_data)?;
+			let mut payment_secret = [0; 32];
+			payment_secret.copy_from_slice(&data_bytes);
+			Ok(PaymentSecret(payment_secret))
 		}
 	}
 }
@@ -957,6 +974,51 @@ mod test {
 			Route::from_base32(&[u5::try_from_u8(0).unwrap(); 40][..]),
 			Err(ParseError::UnexpectedEndOfTaggedFields)
 		);
+	}
+
+	#[test]
+	fn test_payment_secret_deserialization() {
+		use bech32::CheckBase32;
+		use secp256k1::recovery::{RecoveryId, RecoverableSignature};
+		use TaggedField::*;
+		use {SiPrefix, SignedRawInvoice, Signature, RawInvoice, RawTaggedField, RawHrp, RawDataPart,
+				 Currency, Sha256, PositiveTimestamp};
+
+		assert_eq!( // BOLT 11 payment secret invoice. The unknown fields are invoice features.
+			"lnbc25m1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5vdhkven9v5sxyetpdeessp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygs9q5sqqqqqqqqqqqqqqqpqsq67gye39hfg3zd8rgc80k32tvy9xk2xunwm5lzexnvpx6fd77en8qaq424dxgt56cag2dpt359k3ssyhetktkpqh24jqnjyw6uqd08sgptq44qu".parse(),
+			Ok(SignedRawInvoice {
+					raw_invoice: RawInvoice {
+						hrp: RawHrp {
+							currency: Currency::Bitcoin,
+							raw_amount: Some(25),
+							si_prefix: Some(SiPrefix::Milli)
+						},
+						data: RawDataPart {
+							timestamp: PositiveTimestamp::from_unix_timestamp(1496314658).unwrap(),
+							tagged_fields: vec ! [
+								PaymentHash(Sha256(sha256::Hash::from_hex(
+									"0001020304050607080900010203040506070809000102030405060708090102"
+								).unwrap())).into(),
+								Description(::Description::new("coffee beans".to_owned()).unwrap()).into(),
+								PaymentSecret(::PaymentSecret([17; 32])).into(),
+								RawTaggedField::UnknownSemantics(vec![5, 0, 20, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+																											0, 0, 0, 0, 1, 0, 16,
+																											0].check_base32().unwrap())],
+									}
+								},
+					hash: [0xb1, 0x96, 0x46, 0xc3, 0xbc, 0x56, 0x76, 0x1d, 0x20, 0x65, 0x6e, 0x0e, 0x32,
+									0xec, 0xd2, 0x69, 0x27, 0xb7, 0x62, 0x6e, 0x2a, 0x8b, 0xe6, 0x97, 0x71, 0x9f,
+									0xf8, 0x7e, 0x44, 0x54, 0x55, 0xb9],
+					signature: Signature(RecoverableSignature::from_compact(
+										&[0xd7, 0x90, 0x4c, 0xc4, 0xb7, 0x4a, 0x22, 0x26, 0x9c, 0x68, 0xc1, 0xdf, 0x68,
+											0xa9, 0x6c, 0x21, 0x4d, 0x65, 0x1b, 0x93, 0x76, 0xe9, 0xf1, 0x64, 0xd3, 0x60,
+											0x4d, 0xa4, 0xb7, 0xde, 0xcc, 0xce, 0x0e, 0x82, 0xaa, 0xab, 0x4c, 0x85, 0xd3,
+											0x58, 0xea, 0x14, 0xd0, 0xae, 0x34, 0x2d, 0xa3, 0x08, 0x12, 0xf9, 0x5d, 0x97,
+											0x60, 0x82, 0xea, 0xac, 0x81, 0x39, 0x11, 0xda, 0xe0, 0x1a, 0xf3, 0xc1],
+										RecoveryId::from_i32(1).unwrap()
+								).unwrap()),
+			})
+		)
 	}
 
 	#[test]

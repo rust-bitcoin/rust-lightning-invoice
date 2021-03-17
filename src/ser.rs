@@ -297,6 +297,18 @@ impl Base32Len for PayeePubKey {
 	}
 }
 
+impl ToBase32 for PaymentSecret {
+	fn write_base32<W: WriteBase32>(&self, writer: &mut W) -> Result<(), <W as WriteBase32>::Err> {
+		(&self.0[..]).write_base32(writer)
+	}
+}
+
+impl Base32Len for PaymentSecret {
+	fn base32_len(&self) -> usize {
+		bytes_size_to_base32_size(32)
+	}
+}
+
 impl ToBase32 for ExpiryTime {
 	fn write_base32<W: WriteBase32>(&self, writer: &mut W) -> Result<(), <W as WriteBase32>::Err> {
 		writer.write(&encode_int_be_base32(self.as_seconds()))
@@ -435,6 +447,10 @@ impl ToBase32 for TaggedField {
 			TaggedField::Route(ref route_hops) => {
 				write_tagged_field(writer, constants::TAG_ROUTE, route_hops)
 			},
+			TaggedField::PaymentSecret(ref payment_secret) => {
+				  write_tagged_field(writer, constants::TAG_PAYMENT_SECRET, payment_secret)
+			},
+
 		}
 	}
 }
